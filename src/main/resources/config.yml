@@ -1,0 +1,18 @@
+main-world: "world"
+max-region-size-x: 50
+max-region-size-z: 50
+use-full-height: false
+max-active-branches: 2
+max-queue-entries: 1
+
+backup:
+  enabled: true
+  interval-minutes: 30
+  max-backups: 10
+  directory: "backups"
+
+branch-world:
+  prefix: "wg_"
+
+database:
+  file: "worldgit.db"

@@ -1,0 +1,53 @@
+name: WorldGit
+version: ${version}
+main: com.worldgit.WorldGitPlugin
+api-version: '1.21'
+load: POSTWORLD
+authors:
+  - Codex
+depend:
+  - WorldEdit
+softdepend:
+  - Multiverse-Core
+  - LuckPerms
+commands:
+  wg:
+    description: 协作建造分支管理命令
+    usage: /wg
+permissions:
+  worldgit.branch.create:
+    default: true
+  worldgit.branch.abandon:
+    default: true
+  worldgit.branch.list:
+    default: true
+  worldgit.branch.info:
+    default: true
+  worldgit.branch.submit:
+    default: true
+  worldgit.branch.confirm:
+    default: true
+  worldgit.branch.invite:
+    default: true
+  worldgit.branch.tp:
+    default: true
+  worldgit.branch.return:
+    default: true
+  worldgit.branch.queue:
+    default: true
+  worldgit.admin.review:
+    default: op
+  worldgit.admin.close:
+    default: op
+  worldgit.admin.assign:
+    default: op
+  worldgit.admin.list:
+    default: op
+  worldgit.admin.backup:
+    default: op
+  worldgit.admin.locks:
+    default: op
+  worldgit.admin.reload:
+    default: op
+  worldgit.admin.bypass:
+    default: op
