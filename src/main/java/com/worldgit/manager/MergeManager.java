@@ -18,7 +18,8 @@ public final class MergeManager {
     private static final String PHASE_STARTED = "STARTED";
     private static final String PHASE_BLOCKS_COPIED = "BLOCKS_COPIED";
     private static final String PHASE_UNLOCKED = "UNLOCKED";
-    private static final String PHASE_WORLD_DELETED = "WORLD_DELETED";
+    private static final String PHASE_WORLD_UNLOADED = "WORLD_UNLOADED";
+    private static final String LEGACY_PHASE_WORLD_DELETED = "WORLD_DELETED";
     private static final String PHASE_COMPLETE = "COMPLETE";
 
     private final WorldGitPlugin plugin;
@@ -50,13 +51,14 @@ public final class MergeManager {
         this.regionCopyManager = regionCopyManager;
     }
 
-    public void confirmMerge(Player player, Branch branch) {
+    public void confirmMerge(Player player, Branch branch, String mergeMessage) {
         if (branch.status() != BranchStatus.APPROVED) {
             throw new IllegalStateException("该分支尚未通过审核");
         }
         if (!branch.ownerUuid().equals(player.getUniqueId())) {
             throw new IllegalStateException("只能确认自己的分支");
         }
+        branchRepository.saveMergeMetadata(branch.id(), player.getUniqueId(), normalizeMergeMessage(mergeMessage));
         resumeMerge(branch.id());
     }
 
@@ -104,12 +106,14 @@ public final class MergeManager {
 
         if (PHASE_UNLOCKED.equals(phase)) {
             Location fallback = worldManager.createReturnLocation(branch.minX(), branch.maxX(), branch.minZ(), branch.maxZ());
-            worldManager.deleteWorld(branch.worldName(), fallback);
-            databaseManager.upsertMergePhase(branch.id(), PHASE_WORLD_DELETED);
-            phase = PHASE_WORLD_DELETED;
+            if (!worldManager.unloadWorld(branch.worldName(), fallback)) {
+                throw new IllegalStateException("无法卸载分支世界: " + branch.worldName());
+            }
+            databaseManager.upsertMergePhase(branch.id(), PHASE_WORLD_UNLOADED);
+            phase = PHASE_WORLD_UNLOADED;
         }
 
-        if (PHASE_WORLD_DELETED.equals(phase)) {
+        if (PHASE_WORLD_UNLOADED.equals(phase) || LEGACY_PHASE_WORLD_DELETED.equals(phase)) {
             branchRepository.markMerged(branch.id(), Instant.now().getEpochSecond());
             databaseManager.upsertMergePhase(branch.id(), PHASE_COMPLETE);
             phase = PHASE_COMPLETE;
@@ -121,10 +125,7 @@ public final class MergeManager {
     }
 
     private void copyBlocks(Branch branch) {
-        World source = Bukkit.getWorld(branch.worldName());
-        if (source == null) {
-            throw new IllegalStateException("分支世界不存在: " + branch.worldName());
-        }
+        World source = worldManager.createBranchWorld(branch.worldName());
         World target = Bukkit.getWorld(branch.mainWorld());
         if (target == null) {
             throw new IllegalStateException("主世界不存在: " + branch.mainWorld());
@@ -145,5 +146,12 @@ public final class MergeManager {
                 branch.maxZ()
         );
         target.save();
+    }
+
+    private String normalizeMergeMessage(String mergeMessage) {
+        if (mergeMessage == null || mergeMessage.isBlank()) {
+            return "未填写合并说明";
+        }
+        return mergeMessage.trim();
     }
 }

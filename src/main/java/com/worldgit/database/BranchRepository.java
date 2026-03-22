@@ -33,8 +33,8 @@ public final class BranchRepository {
                         id, owner_uuid, owner_name, world_name, main_world,
                         min_x, min_y, min_z, max_x, max_y, max_z,
                         status, created_at, submitted_at, reviewed_by, reviewed_at,
-                        review_note, merged_at, closed_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        review_note, merged_by, merge_message, merged_at, closed_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """
             )) {
                 bindBranch(statement, branch);
@@ -52,8 +52,8 @@ public final class BranchRepository {
                         id, owner_uuid, owner_name, world_name, main_world,
                         min_x, min_y, min_z, max_x, max_y, max_z,
                         status, created_at, submitted_at, reviewed_by, reviewed_at,
-                        review_note, merged_at, closed_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        review_note, merged_by, merge_message, merged_at, closed_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         owner_uuid = excluded.owner_uuid,
                         owner_name = excluded.owner_name,
@@ -71,6 +71,8 @@ public final class BranchRepository {
                         reviewed_by = excluded.reviewed_by,
                         reviewed_at = excluded.reviewed_at,
                         review_note = excluded.review_note,
+                        merged_by = excluded.merged_by,
+                        merge_message = excluded.merge_message,
                         merged_at = excluded.merged_at,
                         closed_at = excluded.closed_at
                     """
@@ -194,6 +196,44 @@ public final class BranchRepository {
                 statement.setLong(3, reviewedAt.toEpochMilli());
                 statement.setString(4, reviewNote);
                 statement.setString(5, branchId);
+                return statement.executeUpdate() > 0;
+            }
+        });
+    }
+
+    public boolean reopenApprovedBranch(String branchId) throws SQLException {
+        return databaseManager.withConnection(connection -> {
+            try (PreparedStatement statement = connection.prepareStatement(
+                    """
+                    UPDATE branches
+                    SET status = 'ACTIVE',
+                        submitted_at = NULL,
+                        reviewed_by = NULL,
+                        reviewed_at = NULL,
+                        review_note = NULL,
+                        merged_by = NULL,
+                        merge_message = NULL
+                    WHERE id = ? AND status = 'APPROVED'
+                    """
+            )) {
+                statement.setString(1, branchId);
+                return statement.executeUpdate() > 0;
+            }
+        });
+    }
+
+    private boolean updateMergeMetadata(String branchId, UUID mergedBy, String mergeMessage) throws SQLException {
+        return databaseManager.withConnection(connection -> {
+            try (PreparedStatement statement = connection.prepareStatement(
+                    """
+                    UPDATE branches
+                    SET merged_by = ?, merge_message = ?
+                    WHERE id = ?
+                    """
+            )) {
+                statement.setString(1, mergedBy == null ? null : mergedBy.toString());
+                statement.setString(2, mergeMessage);
+                statement.setString(3, branchId);
                 return statement.executeUpdate() > 0;
             }
         });
@@ -327,6 +367,24 @@ public final class BranchRepository {
         }
     }
 
+    public boolean reopenApprovedBranchUnchecked(String branchId) {
+        try {
+            return reopenApprovedBranch(branchId);
+        } catch (SQLException exception) {
+            throw new IllegalStateException("重置审核通过状态失败", exception);
+        }
+    }
+
+    public void saveMergeMetadata(String branchId, UUID mergedBy, String mergeMessage) {
+        try {
+            if (!updateMergeMetadata(branchId, mergedBy, mergeMessage)) {
+                throw new IllegalStateException("分支不存在: " + branchId);
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("保存合并信息失败", exception);
+        }
+    }
+
     public void markMerged(String branchId, long mergedAtEpochSecond) {
         try {
             if (!markMerged(branchId, Instant.ofEpochSecond(mergedAtEpochSecond))) {
@@ -383,12 +441,28 @@ public final class BranchRepository {
         }
     }
 
+    public void deleteByIdQuietly(String branchId) {
+        try {
+            deleteById(branchId);
+        } catch (SQLException exception) {
+            throw new IllegalStateException("删除分支失败", exception);
+        }
+    }
+
     public boolean isInvited(String branchId, UUID playerUuid) {
         try {
             return databaseManager.listBranchInvites(branchId).stream()
                     .anyMatch(invite -> invite.playerUuid().equals(playerUuid));
         } catch (SQLException exception) {
             throw new IllegalStateException("查询邀请失败", exception);
+        }
+    }
+
+    public List<BranchInvite> listInvites(String branchId) {
+        try {
+            return databaseManager.listBranchInvites(branchId);
+        } catch (SQLException exception) {
+            throw new IllegalStateException("查询邀请列表失败", exception);
         }
     }
 
@@ -436,8 +510,10 @@ public final class BranchRepository {
         setNullableUuid(statement, 15, branch.reviewedBy());
         setNullableInstant(statement, 16, branch.reviewedAt());
         statement.setString(17, branch.reviewNote());
-        setNullableInstant(statement, 18, branch.mergedAt());
-        setNullableInstant(statement, 19, branch.closedAt());
+        setNullableUuid(statement, 18, branch.mergedBy());
+        statement.setString(19, branch.mergeMessage());
+        setNullableInstant(statement, 20, branch.mergedAt());
+        setNullableInstant(statement, 21, branch.closedAt());
     }
 
     private Branch mapBranch(ResultSet resultSet) throws SQLException {
@@ -459,6 +535,8 @@ public final class BranchRepository {
                 getNullableUuid(resultSet, "reviewed_by"),
                 getNullableInstant(resultSet, "reviewed_at"),
                 resultSet.getString("review_note"),
+                getNullableUuid(resultSet, "merged_by"),
+                resultSet.getString("merge_message"),
                 getNullableInstant(resultSet, "merged_at"),
                 getNullableInstant(resultSet, "closed_at")
         );

@@ -1,46 +1,20 @@
 package com.worldgit.manager;
 
-import com.sk89q.worldedit.IncompleteRegionException;
-import com.sk89q.worldedit.LocalSession;
-import com.sk89q.worldedit.WorldEdit;
-import com.sk89q.worldedit.bukkit.BukkitAdapter;
-import com.sk89q.worldedit.math.BlockVector3;
-import com.sk89q.worldedit.regions.Region;
-import com.worldgit.WorldGitPlugin;
 import com.worldgit.config.PluginConfig;
-import org.bukkit.Material;
+import java.util.HashSet;
+import java.util.Set;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.data.BlockData;
-import org.bukkit.entity.Player;
 
 public final class RegionCopyManager {
 
-    private final WorldGitPlugin plugin;
+    private static final int COPY_PADDING = 20;
+
     private final PluginConfig pluginConfig;
 
-    public RegionCopyManager(WorldGitPlugin plugin, PluginConfig pluginConfig) {
-        this.plugin = plugin;
+    public RegionCopyManager(PluginConfig pluginConfig) {
         this.pluginConfig = pluginConfig;
-    }
-
-    public SelectionBounds readSelection(Player player) {
-        try {
-            LocalSession session = WorldEdit.getInstance()
-                    .getSessionManager()
-                    .get(BukkitAdapter.adapt(player));
-            Region selection = session.getSelection(BukkitAdapter.adapt(player.getWorld()));
-            BlockVector3 min = selection.getMinimumPoint();
-            BlockVector3 max = selection.getMaximumPoint();
-
-            int minY = pluginConfig.useFullHeight() ? player.getWorld().getMinHeight() : min.y();
-            int maxY = pluginConfig.useFullHeight() ? player.getWorld().getMaxHeight() - 1 : max.y();
-            SelectionBounds bounds = new SelectionBounds(min.x(), minY, min.z(), max.x(), maxY, max.z());
-            validate(bounds);
-            return bounds;
-        } catch (IncompleteRegionException ex) {
-            throw new IllegalStateException("请先使用 WorldEdit 选择一个长方体区域");
-        }
     }
 
     public void validate(SelectionBounds bounds) {
@@ -56,16 +30,39 @@ public final class RegionCopyManager {
         copyRegion(source, target, bounds.minX(), bounds.minY(), bounds.minZ(), bounds.maxX(), bounds.maxY(), bounds.maxZ());
     }
 
+    public SelectionBounds expandForCopy(World world, SelectionBounds editableBounds) {
+        return new SelectionBounds(
+                editableBounds.minX() - COPY_PADDING,
+                world.getMinHeight(),
+                editableBounds.minZ() - COPY_PADDING,
+                editableBounds.maxX() + COPY_PADDING,
+                world.getMaxHeight() - 1,
+                editableBounds.maxZ() + COPY_PADDING
+        );
+    }
+
     public void copyRegion(World source, World target, int minX, int minY, int minZ, int maxX, int maxY, int maxZ) {
+        preloadChunks(source, minX, minZ, maxX, maxZ);
+        preloadChunks(target, minX, minZ, maxX, maxZ);
         for (int x = minX; x <= maxX; x++) {
             for (int z = minZ; z <= maxZ; z++) {
-                target.getChunkAt(x >> 4, z >> 4).load(true);
                 for (int y = minY; y <= maxY; y++) {
                     Block sourceBlock = source.getBlockAt(x, y, z);
                     Block targetBlock = target.getBlockAt(x, y, z);
                     BlockData data = sourceBlock.getBlockData().clone();
-                    targetBlock.setType(Material.AIR, false);
                     targetBlock.setBlockData(data, false);
+                }
+            }
+        }
+    }
+
+    private void preloadChunks(World world, int minX, int minZ, int maxX, int maxZ) {
+        Set<Long> visited = new HashSet<>();
+        for (int chunkX = minX >> 4; chunkX <= maxX >> 4; chunkX++) {
+            for (int chunkZ = minZ >> 4; chunkZ <= maxZ >> 4; chunkZ++) {
+                long key = (((long) chunkX) << 32) ^ (chunkZ & 0xffffffffL);
+                if (visited.add(key)) {
+                    world.getChunkAt(chunkX, chunkZ).load(true);
                 }
             }
         }

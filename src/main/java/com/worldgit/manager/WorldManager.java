@@ -15,6 +15,8 @@ import org.bukkit.entity.Player;
 
 public final class WorldManager {
 
+    private static final String PATH_SEPARATOR = "/";
+
     private final WorldGitPlugin plugin;
     private final PluginConfig pluginConfig;
 
@@ -37,6 +39,12 @@ public final class WorldManager {
             return existing;
         }
 
+        try {
+            Files.createDirectories(branchWorldRootPath());
+        } catch (IOException exception) {
+            throw new IllegalStateException("无法创建分支世界目录", exception);
+        }
+
         WorldCreator creator = new WorldCreator(worldName)
                 .generator(new VoidChunkGenerator())
                 .environment(World.Environment.NORMAL);
@@ -48,16 +56,21 @@ public final class WorldManager {
         return world;
     }
 
-    public boolean deleteWorld(String worldName, Location fallbackLocation) {
+    public boolean unloadWorld(String worldName, Location fallbackLocation) {
         World world = Bukkit.getWorld(worldName);
-        if (world != null) {
-            Location safeFallback = fallbackLocation != null ? fallbackLocation : getMainWorld().getSpawnLocation();
-            for (Player player : world.getPlayers()) {
-                player.teleport(safeFallback);
-            }
-            if (!Bukkit.unloadWorld(world, false)) {
-                return false;
-            }
+        if (world == null) {
+            return true;
+        }
+        Location safeFallback = fallbackLocation != null ? fallbackLocation : getMainWorld().getSpawnLocation();
+        for (Player player : world.getPlayers()) {
+            player.teleport(safeFallback);
+        }
+        return Bukkit.unloadWorld(world, true);
+    }
+
+    public boolean deleteWorld(String worldName, Location fallbackLocation) {
+        if (!unloadWorld(worldName, fallbackLocation)) {
+            return false;
         }
 
         Path worldDir = Bukkit.getWorldContainer().toPath().resolve(worldName);
@@ -81,7 +94,7 @@ public final class WorldManager {
     }
 
     public boolean isBranchWorld(String worldName) {
-        return worldName != null && worldName.startsWith(pluginConfig.branchWorldPrefix());
+        return worldName != null && worldName.startsWith(branchWorldPathPrefix());
     }
 
     public boolean isBranchWorld(World world) {
@@ -89,7 +102,27 @@ public final class WorldManager {
     }
 
     public String createBranchWorldName(String branchId) {
-        return pluginConfig.branchWorldPrefix() + branchId.substring(0, Math.min(8, branchId.length())).toLowerCase();
+        return branchWorldPathPrefix() + pluginConfig.branchWorldPrefix()
+                + branchId.substring(0, Math.min(8, branchId.length())).toLowerCase();
+    }
+
+    public String branchLabel(String worldName) {
+        if (!isBranchWorld(worldName)) {
+            return worldName;
+        }
+        return worldName.substring(branchWorldPathPrefix().length());
+    }
+
+    public Path branchWorldRootPath() {
+        return Bukkit.getWorldContainer().toPath().resolve(pluginConfig.branchWorldDirectory());
+    }
+
+    public String branchWorldPathPrefix() {
+        String directory = pluginConfig.branchWorldDirectory();
+        if (directory.endsWith(PATH_SEPARATOR)) {
+            return directory;
+        }
+        return directory + PATH_SEPARATOR;
     }
 
     public Location createReturnLocation(int minX, int maxX, int minZ, int maxZ) {
@@ -103,8 +136,7 @@ public final class WorldManager {
     public Location createBranchSpawn(World world, int minX, int maxX, int minY, int maxY, int minZ, int maxZ) {
         int centerX = (minX + maxX) / 2;
         int centerZ = (minZ + maxZ) / 2;
-        int highest = world.getHighestBlockYAt(centerX, centerZ);
-        int y = highest > world.getMinHeight() ? highest + 1 : Math.min(maxY + 2, world.getMaxHeight() - 1);
+        int y = Math.min(maxY + 2, world.getMaxHeight() - 1);
         y = Math.max(y, minY + 1);
         return new Location(world, centerX + 0.5, y, centerZ + 0.5);
     }

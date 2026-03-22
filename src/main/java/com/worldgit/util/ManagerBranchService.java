@@ -1,6 +1,8 @@
 package com.worldgit.util;
 
 import com.worldgit.manager.BranchManager;
+import com.worldgit.manager.PlayerSelectionManager;
+import com.worldgit.manager.RegionCopyManager;
 import com.worldgit.model.Branch;
 import java.util.List;
 import org.bukkit.command.CommandSender;
@@ -87,6 +89,41 @@ public final class ManagerBranchService implements BranchService {
     }
 
     @Override
+    public boolean setPos1(Player player, Integer x, Integer y, Integer z) {
+        requirePermission(player, "worldgit.branch.create");
+        PlayerSelectionManager.SelectionSnapshot snapshot = branchManager.setSelectionPos1(player, x, y, z);
+        MessageUtil.sendSuccess(player, "已设置 pos1: " + formatPoint(snapshot.pos1()));
+        sendSelectionSummary(player, snapshot);
+        return true;
+    }
+
+    @Override
+    public boolean setPos2(Player player, Integer x, Integer y, Integer z) {
+        requirePermission(player, "worldgit.branch.create");
+        PlayerSelectionManager.SelectionSnapshot snapshot = branchManager.setSelectionPos2(player, x, y, z);
+        MessageUtil.sendSuccess(player, "已设置 pos2: " + formatPoint(snapshot.pos2()));
+        sendSelectionSummary(player, snapshot);
+        return true;
+    }
+
+    @Override
+    public boolean selection(Player player) {
+        requirePermission(player, "worldgit.branch.create");
+        PlayerSelectionManager.SelectionSnapshot snapshot = branchManager.getSelection(player)
+                .orElseThrow(() -> new IllegalStateException("你当前还没有设置选区"));
+        sendSelectionSummary(player, snapshot);
+        return true;
+    }
+
+    @Override
+    public boolean clearSelection(Player player) {
+        requirePermission(player, "worldgit.branch.create");
+        branchManager.clearSelection(player);
+        MessageUtil.sendSuccess(player, "已清除当前选区");
+        return true;
+    }
+
+    @Override
     public List<String> suggestBranchIds(CommandSender sender, String prefix) {
         if (!(sender instanceof Player player)) {
             return List.of();
@@ -109,5 +146,21 @@ public final class ManagerBranchService implements BranchService {
         if (!sender.hasPermission(permission)) {
             throw new IllegalStateException("你没有权限执行该命令");
         }
+    }
+
+    private void sendSelectionSummary(Player player, PlayerSelectionManager.SelectionSnapshot snapshot) {
+        if (!snapshot.complete()) {
+            MessageUtil.sendInfo(player, "当前选区点位: " + snapshot.selectedPoints() + "/2");
+            return;
+        }
+        RegionCopyManager.SelectionBounds bounds = snapshot.toBounds(player.getWorld(), false);
+        MessageUtil.sendInfo(player, "选区范围: ("
+                + bounds.minX() + ", " + bounds.minY() + ", " + bounds.minZ()
+                + ") -> ("
+                + bounds.maxX() + ", " + bounds.maxY() + ", " + bounds.maxZ() + ")");
+    }
+
+    private String formatPoint(PlayerSelectionManager.SelectionPoint point) {
+        return "(" + point.x() + ", " + point.y() + ", " + point.z() + ")";
     }
 }

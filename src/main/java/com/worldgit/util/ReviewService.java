@@ -14,6 +14,8 @@ public interface ReviewService {
 
     boolean confirm(Player player, String branchId);
 
+    boolean forceEdit(Player player, String branchId);
+
     boolean approve(CommandSender sender, String branchId, String note);
 
     boolean reject(CommandSender sender, String branchId, String note);
@@ -21,6 +23,8 @@ public interface ReviewService {
     boolean list(CommandSender sender);
 
     List<String> suggestReviewIds(CommandSender sender, String prefix);
+
+    List<String> suggestConfirmIds(CommandSender sender, String prefix);
 
     static ReviewService noop() {
         return new ReviewService() {
@@ -31,6 +35,11 @@ public interface ReviewService {
 
             @Override
             public boolean confirm(Player player, String branchId) {
+                return false;
+            }
+
+            @Override
+            public boolean forceEdit(Player player, String branchId) {
                 return false;
             }
 
@@ -51,6 +60,11 @@ public interface ReviewService {
 
             @Override
             public List<String> suggestReviewIds(CommandSender sender, String prefix) {
+                return List.of();
+            }
+
+            @Override
+            public List<String> suggestConfirmIds(CommandSender sender, String prefix) {
                 return List.of();
             }
         };

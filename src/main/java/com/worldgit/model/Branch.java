@@ -25,6 +25,8 @@ public record Branch(
         UUID reviewedBy,
         Instant reviewedAt,
         String reviewNote,
+        UUID mergedBy,
+        String mergeMessage,
         Instant mergedAt,
         Instant closedAt
 ) {
@@ -58,6 +60,8 @@ public record Branch(
                 reviewedBy,
                 reviewedAt,
                 reviewNote,
+                mergedBy,
+                mergeMessage,
                 mergedAt,
                 closedAt
         );
@@ -82,6 +86,8 @@ public record Branch(
                 reviewedBy,
                 reviewedAt,
                 reviewNote,
+                mergedBy,
+                mergeMessage,
                 mergedAt,
                 closedAt
         );
@@ -106,12 +112,14 @@ public record Branch(
                 newReviewedBy,
                 newReviewedAt,
                 newReviewNote,
+                mergedBy,
+                mergeMessage,
                 mergedAt,
                 closedAt
         );
     }
 
-    public Branch withMergedAt(Instant newMergedAt) {
+    public Branch withMerge(UUID newMergedBy, String newMergeMessage, Instant newMergedAt) {
         return new Branch(
                 id,
                 ownerUuid,
@@ -130,6 +138,8 @@ public record Branch(
                 reviewedBy,
                 reviewedAt,
                 reviewNote,
+                newMergedBy,
+                newMergeMessage,
                 newMergedAt,
                 closedAt
         );
@@ -154,6 +164,8 @@ public record Branch(
                 reviewedBy,
                 reviewedAt,
                 reviewNote,
+                mergedBy,
+                mergeMessage,
                 mergedAt,
                 newClosedAt
         );
