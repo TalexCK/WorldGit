@@ -26,6 +26,14 @@ public interface BranchService {
 
     boolean queue(Player player);
 
+    boolean setPos1(Player player, Integer x, Integer y, Integer z);
+
+    boolean setPos2(Player player, Integer x, Integer y, Integer z);
+
+    boolean selection(Player player);
+
+    boolean clearSelection(Player player);
+
     List<String> suggestBranchIds(CommandSender sender, String prefix);
 
     static BranchService noop() {
@@ -62,6 +70,26 @@ public interface BranchService {
 
             @Override
             public boolean queue(Player player) {
+                return false;
+            }
+
+            @Override
+            public boolean setPos1(Player player, Integer x, Integer y, Integer z) {
+                return false;
+            }
+
+            @Override
+            public boolean setPos2(Player player, Integer x, Integer y, Integer z) {
+                return false;
+            }
+
+            @Override
+            public boolean selection(Player player) {
+                return false;
+            }
+
+            @Override
+            public boolean clearSelection(Player player) {
                 return false;
             }
 

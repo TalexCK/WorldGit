@@ -4,6 +4,7 @@ import com.worldgit.WorldGitPlugin;
 import com.worldgit.config.PluginConfig;
 import com.worldgit.database.QueueRepository;
 import com.worldgit.model.QueueEntry;
+import com.worldgit.util.MessageUtil;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -48,12 +49,16 @@ public final class QueueManager {
         queueRepository.deleteByPlayerQuietly(playerUuid);
     }
 
+    public java.util.Optional<QueueEntry> findByPlayer(UUID playerUuid) {
+        return queueRepository.findByPlayerQuietly(playerUuid);
+    }
+
     public void notifyRegionUnlocked(String mainWorld, int minX, int minY, int minZ, int maxX, int maxY, int maxZ) {
         List<QueueEntry> entries = queueRepository.findOverlapping(mainWorld, minX, minY, minZ, maxX, maxY, maxZ);
         for (QueueEntry entry : entries) {
             Player player = Bukkit.getPlayer(entry.playerUuid());
             if (player != null && player.isOnline()) {
-                player.sendRichMessage("<green>你排队的区域已解锁，可重新执行 /wg create</green>");
+                MessageUtil.sendSuccess(player, "你排队的区域已解锁，可重新执行 /wg create");
             }
         }
     }

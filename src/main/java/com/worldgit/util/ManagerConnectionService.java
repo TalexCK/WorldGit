@@ -32,6 +32,6 @@ public final class ManagerConnectionService implements ConnectionService {
 
     @Override
     public void handleQuit(Player player) {
-        // 当前版本无需在退出时额外处理。
+        branchManager.forgetCachedPlayerState(player);
     }
 }

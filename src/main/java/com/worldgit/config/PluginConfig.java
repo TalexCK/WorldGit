@@ -6,6 +6,7 @@ import org.bukkit.plugin.java.JavaPlugin;
 
 public final class PluginConfig {
 
+    private final String displayPrefix;
     private final String mainWorld;
     private final int maxRegionSizeX;
     private final int maxRegionSizeZ;
@@ -16,10 +17,12 @@ public final class PluginConfig {
     private final int backupIntervalMinutes;
     private final int backupMaxBackups;
     private final String backupDirectory;
+    private final String branchWorldDirectory;
     private final String branchWorldPrefix;
     private final String databaseFile;
 
     private PluginConfig(
+            String displayPrefix,
             String mainWorld,
             int maxRegionSizeX,
             int maxRegionSizeZ,
@@ -30,9 +33,11 @@ public final class PluginConfig {
             int backupIntervalMinutes,
             int backupMaxBackups,
             String backupDirectory,
+            String branchWorldDirectory,
             String branchWorldPrefix,
             String databaseFile
     ) {
+        this.displayPrefix = displayPrefix;
         this.mainWorld = mainWorld;
         this.maxRegionSizeX = maxRegionSizeX;
         this.maxRegionSizeZ = maxRegionSizeZ;
@@ -43,6 +48,7 @@ public final class PluginConfig {
         this.backupIntervalMinutes = backupIntervalMinutes;
         this.backupMaxBackups = backupMaxBackups;
         this.backupDirectory = backupDirectory;
+        this.branchWorldDirectory = branchWorldDirectory;
         this.branchWorldPrefix = branchWorldPrefix;
         this.databaseFile = databaseFile;
     }
@@ -50,6 +56,7 @@ public final class PluginConfig {
     public static PluginConfig load(JavaPlugin plugin) {
         FileConfiguration config = plugin.getConfig();
         return new PluginConfig(
+                normalizeDisplayPrefix(config.getString("display-prefix", "WorldGit")),
                 config.getString("main-world", "world"),
                 Math.max(1, config.getInt("max-region-size-x", 50)),
                 Math.max(1, config.getInt("max-region-size-z", 50)),
@@ -60,9 +67,21 @@ public final class PluginConfig {
                 Math.max(1, config.getInt("backup.interval-minutes", 30)),
                 Math.max(1, config.getInt("backup.max-backups", 10)),
                 config.getString("backup.directory", "backups"),
+                config.getString("branch-world.directory", "branch"),
                 config.getString("branch-world.prefix", "wg_"),
                 config.getString("database.file", "worldgit.db")
         );
+    }
+
+    private static String normalizeDisplayPrefix(String value) {
+        if (value == null || value.isBlank()) {
+            return "WorldGit";
+        }
+        return value.trim();
+    }
+
+    public String displayPrefix() {
+        return displayPrefix;
     }
 
     public String mainWorld() {
@@ -111,6 +130,10 @@ public final class PluginConfig {
 
     public String branchWorldPrefix() {
         return branchWorldPrefix;
+    }
+
+    public String branchWorldDirectory() {
+        return branchWorldDirectory;
     }
 
     public String databaseFile() {

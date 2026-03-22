@@ -28,7 +28,10 @@ For the Chinese version, see [README.zh-CN.md](README.zh-CN.md).
 - Region-based branch creation from a WorldEdit selection
 - Automatic region locking to prevent conflicting work
 - Isolated branch worlds for editing
+- Book-driven player menu with branch, review, and merge-history chest UIs
 - Review queue: submit, approve, reject, confirm merge
+- Approved branches become read-only until `/wg forceedit`
+- Sign-based coordinate input for `Pos1` / `Pos2` and merge messages
 - Crash-safe merge journal with startup recovery
 - Invite system for shared branch access
 - Queue system for locked regions
@@ -99,6 +102,7 @@ database:
 - `/wg info <id>`
 - `/wg submit [id]`
 - `/wg confirm [id]`
+- `/wg forceedit [id]`
 - `/wg invite <player> [id]`
 - `/wg uninvite <player> [id]`
 - `/wg tp <id>`
@@ -117,6 +121,25 @@ database:
 - `/wg admin locks`
 - `/wg reload`
 
+## Player Menu
+
+- Players receive a menu book in hotbar slot `9`.
+- Right-click the book to open the main player menu.
+- `Pos1` / `Pos2` support:
+  - Left click to use the current player coordinates
+  - Right click to open a sign input
+  - Coordinate syntax supports absolute values, `~`, `~+n`, and `~-n`
+- Approved branches are merged through a two-step Chest UI:
+  - Pick the approved branch first
+  - Confirm merge and enter a merge message through a sign input
+- The paper item in the lower-left area opens paged merge history with:
+  - Builders
+  - Approver
+  - Merger
+  - Merge message
+  - `Pos1` / `Pos2`
+  - Teleport entry back to the branch world
+
 ## Permissions
 
 ### Player Permissions
@@ -127,6 +150,7 @@ database:
 - `worldgit.branch.info`
 - `worldgit.branch.submit`
 - `worldgit.branch.confirm`
+- `worldgit.branch.forceedit`
 - `worldgit.branch.invite`
 - `worldgit.branch.tp`
 - `worldgit.branch.return`
@@ -155,9 +179,13 @@ database:
 ### Submit and Merge
 
 1. Run `/wg submit [id]`.
-2. An admin reviews the branch.
-3. If approved, run `/wg confirm [id]`.
-4. WorldGit merges the branch back into the main world.
+2. The branch stays editable while it is only waiting for review.
+3. An admin reviews the branch.
+4. Once approved, the branch becomes read-only.
+5. If you want to keep editing after approval, run `/wg forceedit [id]` first to remove approval and return the branch to edit mode immediately.
+6. After editing again, run `/wg submit [id]` again for a new review.
+7. If no more edits are needed, run `/wg confirm [id]`, choose the target branch in the Chest UI, and enter a merge message.
+8. WorldGit merges the branch back into the main world.
 
 ### Queue for a Locked Region
 
@@ -176,9 +204,13 @@ The plugin blocks direct edits in the configured main world, including:
 - Bone meal and fertilization updates
 - Fluid and block-state changes such as spread, fade, form, and flow
 - Pistons
-- Explosions
+- Explosions including TNT and fireball-style explosions
 - Hanging entities such as paintings and item frames
 - Armor stand manipulation and damage
+- Spawn eggs, dispenser-fired spawn eggs, and egg hatching into chicks
+- Natural creature and monster spawning, spawners, and trial spawners
+- Patrol, raid, reinforcement, and similar hostile mob spawns
+- Entering the Nether or the End from the main world
 
 Admins with `worldgit.admin.bypass` can bypass player-driven protection checks.
 
@@ -213,14 +245,19 @@ Admins with `worldgit.admin.bypass` can bypass player-driven protection checks.
 
 1. Modify blocks in the branch world.
 2. Run `/wg submit`.
-3. Approve with `/wg review approve <id>`.
-4. Confirm with `/wg confirm <id>`.
-5. Verify:
+3. Verify the branch is still editable while it is only waiting for review.
+4. Approve with `/wg review approve <id>`.
+5. Verify the approved branch becomes read-only until `/wg forceedit <id>` is used.
+6. If no new edits were made after approval, run `/wg confirm <id>` to open the branch picker UI, then the final confirmation UI, then the merge-message sign input.
+7. If the branch needs more work after approval, run `/wg forceedit <id>` first.
+8. After editing again, submit it once more with `/wg submit`.
+9. Verify:
    - Players are moved out safely
    - Blocks are merged into the main world
    - The lock is released
    - The branch world is deleted
    - The branch is marked `MERGED`
+   - Merge history shows builders, approver, merger, merge message, and region coordinates
 
 ### Queue
 

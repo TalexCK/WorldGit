@@ -9,9 +9,11 @@ import org.bukkit.entity.Player;
 public final class ManagerReviewService implements ReviewService {
 
     private final BranchManager branchManager;
+    private final ReviewMenuManager reviewMenuManager;
 
-    public ManagerReviewService(BranchManager branchManager) {
+    public ManagerReviewService(BranchManager branchManager, ReviewMenuManager reviewMenuManager) {
         this.branchManager = branchManager;
+        this.reviewMenuManager = reviewMenuManager;
     }
 
     @Override
@@ -27,6 +29,14 @@ public final class ManagerReviewService implements ReviewService {
         requirePermission(player, "worldgit.branch.confirm");
         branchManager.confirmBranch(player, branchId);
         MessageUtil.sendSuccess(player, "合并流程已开始");
+        return true;
+    }
+
+    @Override
+    public boolean forceEdit(Player player, String branchId) {
+        requirePermission(player, "worldgit.branch.forceedit");
+        Branch branch = branchManager.forceEditBranch(player, branchId);
+        MessageUtil.sendSuccess(player, "分支已切回编辑状态: " + branch.id() + "，请重新提交审核。");
         return true;
     }
 
@@ -51,6 +61,10 @@ public final class ManagerReviewService implements ReviewService {
     @Override
     public boolean list(CommandSender sender) {
         requirePermission(sender, "worldgit.admin.review");
+        if (sender instanceof Player player) {
+            reviewMenuManager.openPendingReviewMenu(player);
+            return true;
+        }
         List<Branch> branches = branchManager.listPendingReviews();
         if (branches.isEmpty()) {
             MessageUtil.sendInfo(sender, "当前没有待审核分支。");
@@ -67,6 +81,18 @@ public final class ManagerReviewService implements ReviewService {
     public List<String> suggestReviewIds(CommandSender sender, String prefix) {
         String normalized = prefix == null ? "" : prefix.toLowerCase();
         return branchManager.listPendingReviews().stream()
+                .map(Branch::id)
+                .filter(id -> id.toLowerCase().startsWith(normalized))
+                .toList();
+    }
+
+    @Override
+    public List<String> suggestConfirmIds(CommandSender sender, String prefix) {
+        if (!(sender instanceof Player player)) {
+            return List.of();
+        }
+        String normalized = prefix == null ? "" : prefix.toLowerCase();
+        return branchManager.listOwnApprovedBranches(player).stream()
                 .map(Branch::id)
                 .filter(id -> id.toLowerCase().startsWith(normalized))
                 .toList();

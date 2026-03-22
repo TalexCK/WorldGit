@@ -24,8 +24,7 @@ public final class ReviewCommands {
 
     public boolean execute(CommandSender sender, String[] args) {
         if (args.length == 0) {
-            sendHelp(sender);
-            return true;
+            return handleList(sender);
         }
 
         String subCommand = args[0].toLowerCase();
@@ -33,6 +32,7 @@ public final class ReviewCommands {
         return switch (subCommand) {
             case "submit" -> handleSubmit(sender, tail);
             case "confirm" -> handleConfirm(sender, tail);
+            case "forceedit" -> handleForceEdit(sender, tail);
             case "list" -> handleList(sender);
             case "approve" -> handleApprove(sender, tail);
             case "reject" -> handleReject(sender, tail);
@@ -45,11 +45,12 @@ public final class ReviewCommands {
 
     public List<String> complete(CommandSender sender, String[] args) {
         if (args.length <= 1) {
-            return prefixMatch(args, List.of("submit", "confirm", "list", "approve", "reject"));
+            return prefixMatch(args, List.of("submit", "confirm", "forceedit", "list", "approve", "reject"));
         }
         String subCommand = args[0].toLowerCase();
         return switch (subCommand) {
-            case "submit", "confirm", "approve", "reject" -> reviewService.suggestReviewIds(sender, args[1]);
+            case "confirm", "forceedit" -> reviewService.suggestConfirmIds(sender, args[1]);
+            case "approve", "reject" -> reviewService.suggestReviewIds(sender, args[1]);
             default -> List.of();
         };
     }
@@ -74,6 +75,18 @@ public final class ReviewCommands {
         String branchId = args.length > 0 ? args[0] : "";
         if (!reviewService.confirm(player, branchId)) {
             MessageUtil.sendWarning(sender, "确认合并尚未接入实际管理器。");
+        }
+        return true;
+    }
+
+    private boolean handleForceEdit(CommandSender sender, String[] args) {
+        if (!(sender instanceof Player player)) {
+            MessageUtil.sendError(sender, "只有玩家可以切回编辑状态。");
+            return true;
+        }
+        String branchId = args.length > 0 ? args[0] : "";
+        if (!reviewService.forceEdit(player, branchId)) {
+            MessageUtil.sendWarning(sender, "切回编辑状态尚未接入实际管理器。");
         }
         return true;
     }
@@ -112,7 +125,7 @@ public final class ReviewCommands {
     }
 
     private void sendHelp(CommandSender sender) {
-        MessageUtil.sendInfo(sender, "可用命令: /wg submit [id], /wg confirm [id], /wg review list, /wg review approve <id> [note], /wg review reject <id> <note>");
+        MessageUtil.sendInfo(sender, "可用命令: /wg submit [id], /wg confirm [id], /wg forceedit [id], /wg review list, /wg review approve <id> [备注], /wg review reject <id> <备注>");
     }
 
     private static String[] slice(String[] args) {

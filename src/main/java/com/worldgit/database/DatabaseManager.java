@@ -26,7 +26,7 @@ import java.util.stream.Collectors;
  */
 public final class DatabaseManager implements Closeable {
 
-    private static final int SCHEMA_VERSION = 1;
+    private static final int SCHEMA_VERSION = 2;
 
     private final Path databaseFile;
     private final String jdbcUrl;
@@ -444,6 +444,10 @@ public final class DatabaseManager implements Closeable {
                         "CREATE UNIQUE INDEX IF NOT EXISTS idx_queue_entries_player_uuid ON queue_entries(player_uuid)",
                         "CREATE INDEX IF NOT EXISTS idx_queue_entries_main_world ON queue_entries(main_world)",
                         "CREATE INDEX IF NOT EXISTS idx_merge_journal_phase ON merge_journal(phase)"
+                )),
+                new Migration(2, List.of(
+                        "ALTER TABLE branches ADD COLUMN merged_by TEXT",
+                        "ALTER TABLE branches ADD COLUMN merge_message TEXT"
                 ))
         );
     }

@@ -38,6 +38,10 @@ public final class BranchCommands {
             case "tp", "teleport" -> handleTeleport(sender, tail);
             case "return" -> handleReturn(sender);
             case "queue" -> handleQueue(sender);
+            case "pos1" -> handlePos1(sender, tail);
+            case "pos2" -> handlePos2(sender, tail);
+            case "selection" -> handleSelection(sender);
+            case "clearselection" -> handleClearSelection(sender);
             default -> {
                 sendBranchHelp(sender);
                 yield true;
@@ -47,7 +51,8 @@ public final class BranchCommands {
 
     public List<String> complete(CommandSender sender, String[] args) {
         if (args.length <= 1) {
-            return prefixMatch(args, List.of("create", "abandon", "list", "info", "tp", "return", "queue"));
+            return prefixMatch(args, List.of("create", "abandon", "list", "info", "tp", "return", "queue",
+                    "pos1", "pos2", "selection", "clearselection"));
         }
         String subCommand = args[0].toLowerCase();
         return switch (subCommand) {
@@ -133,8 +138,38 @@ public final class BranchCommands {
         return true;
     }
 
+    private boolean handlePos1(CommandSender sender, String[] args) {
+        return handleSelectionPoint(sender, args, true);
+    }
+
+    private boolean handlePos2(CommandSender sender, String[] args) {
+        return handleSelectionPoint(sender, args, false);
+    }
+
+    private boolean handleSelection(CommandSender sender) {
+        if (!(sender instanceof Player player)) {
+            MessageUtil.sendError(sender, "只有玩家可以查看选区。");
+            return true;
+        }
+        if (!branchService.selection(player)) {
+            MessageUtil.sendWarning(sender, "选区查看尚未接入实际管理器。");
+        }
+        return true;
+    }
+
+    private boolean handleClearSelection(CommandSender sender) {
+        if (!(sender instanceof Player player)) {
+            MessageUtil.sendError(sender, "只有玩家可以清除选区。");
+            return true;
+        }
+        if (!branchService.clearSelection(player)) {
+            MessageUtil.sendWarning(sender, "清除选区尚未接入实际管理器。");
+        }
+        return true;
+    }
+
     private void sendBranchHelp(CommandSender sender) {
-        MessageUtil.sendInfo(sender, "可用命令: /wg create, /wg abandon <id>, /wg list, /wg info <id>, /wg tp <id>, /wg return, /wg queue");
+        MessageUtil.sendInfo(sender, "可用命令: /wg pos1 [x y z], /wg pos2 [x y z], /wg selection, /wg clearselection, /wg create, /wg queue");
     }
 
     private static String[] slice(String[] args) {
@@ -154,5 +189,42 @@ public final class BranchCommands {
         return candidates.stream()
                 .filter(option -> option.startsWith(prefix))
                 .toList();
+    }
+
+    private boolean handleSelectionPoint(CommandSender sender, String[] args, boolean firstPoint) {
+        if (!(sender instanceof Player player)) {
+            MessageUtil.sendError(sender, "只有玩家可以设置选区。");
+            return true;
+        }
+        Integer[] coordinates = parseCoordinates(args, firstPoint ? "pos1" : "pos2");
+        boolean handled = firstPoint
+                ? branchService.setPos1(player, coordinates[0], coordinates[1], coordinates[2])
+                : branchService.setPos2(player, coordinates[0], coordinates[1], coordinates[2]);
+        if (!handled) {
+            MessageUtil.sendWarning(sender, "坐标选区尚未接入实际管理器。");
+        }
+        return true;
+    }
+
+    private Integer[] parseCoordinates(String[] args, String commandName) {
+        if (args.length == 0) {
+            return new Integer[]{null, null, null};
+        }
+        if (args.length != 3) {
+            throw new IllegalStateException("用法: /wg " + commandName + " [x y z]");
+        }
+        return new Integer[]{
+                parseInteger(args[0], "x"),
+                parseInteger(args[1], "y"),
+                parseInteger(args[2], "z")
+        };
+    }
+
+    private int parseInteger(String value, String axis) {
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException exception) {
+            throw new IllegalStateException(axis + " 坐标必须是整数");
+        }
     }
 }

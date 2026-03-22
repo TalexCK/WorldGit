@@ -12,12 +12,16 @@ import com.worldgit.database.LockRepository;
 import com.worldgit.database.QueueRepository;
 import com.worldgit.generator.VoidChunkGenerator;
 import com.worldgit.listener.BranchWorldListener;
+import com.worldgit.listener.BranchEditProtectionListener;
 import com.worldgit.listener.MainWorldProtectionListener;
 import com.worldgit.listener.PlayerConnectionListener;
+import com.worldgit.listener.PlayerStateListener;
 import com.worldgit.manager.BackupManager;
 import com.worldgit.manager.BranchManager;
 import com.worldgit.manager.LockManager;
 import com.worldgit.manager.MergeManager;
+import com.worldgit.manager.PlayerSelectionManager;
+import com.worldgit.manager.PlayerStateManager;
 import com.worldgit.manager.ProtectionManager;
 import com.worldgit.manager.QueueManager;
 import com.worldgit.manager.RegionCopyManager;
@@ -28,6 +32,9 @@ import com.worldgit.util.ManagerBranchWorldService;
 import com.worldgit.util.ManagerConnectionService;
 import com.worldgit.util.ManagerInviteService;
 import com.worldgit.util.ManagerReviewService;
+import com.worldgit.util.MessageUtil;
+import com.worldgit.util.PlayerMenuManager;
+import com.worldgit.util.ReviewMenuManager;
 import java.io.IOException;
 import java.sql.SQLException;
 import java.util.Objects;
@@ -51,6 +58,10 @@ public final class WorldGitPlugin extends JavaPlugin {
     private MergeManager mergeManager;
     private BackupManager backupManager;
     private BranchManager branchManager;
+    private PlayerSelectionManager selectionManager;
+    private PlayerStateManager playerStateManager;
+    private ReviewMenuManager reviewMenuManager;
+    private PlayerMenuManager playerMenuManager;
 
     @Override
     public void onEnable() {
@@ -70,6 +81,12 @@ public final class WorldGitPlugin extends JavaPlugin {
         if (backupManager != null) {
             backupManager.stop();
         }
+        if (playerMenuManager != null) {
+            playerMenuManager.stop();
+        }
+        if (playerStateManager != null) {
+            playerStateManager.stop();
+        }
         if (databaseManager != null) {
             try {
                 databaseManager.close();
@@ -82,11 +99,18 @@ public final class WorldGitPlugin extends JavaPlugin {
     public void reloadPluginConfig() {
         reloadConfig();
         pluginConfig = PluginConfig.load(this);
+        MessageUtil.setDisplayPrefix(pluginConfig.displayPrefix());
     }
 
     public void reloadRuntime() throws SQLException {
         if (backupManager != null) {
             backupManager.stop();
+        }
+        if (playerMenuManager != null) {
+            playerMenuManager.stop();
+        }
+        if (playerStateManager != null) {
+            playerStateManager.stop();
         }
         HandlerList.unregisterAll(this);
         if (databaseManager != null) {
@@ -106,7 +130,8 @@ public final class WorldGitPlugin extends JavaPlugin {
 
         protectionManager = new ProtectionManager(pluginConfig);
         worldManager = new WorldManager(this, pluginConfig);
-        regionCopyManager = new RegionCopyManager(this, pluginConfig);
+        regionCopyManager = new RegionCopyManager(pluginConfig);
+        selectionManager = new PlayerSelectionManager();
         queueManager = new QueueManager(this, pluginConfig, queueRepository);
         lockManager = new LockManager(lockRepository);
         mergeManager = new MergeManager(
@@ -129,12 +154,19 @@ public final class WorldGitPlugin extends JavaPlugin {
                 mergeManager,
                 worldManager,
                 regionCopyManager,
+                selectionManager,
                 protectionManager
         );
+        reviewMenuManager = new ReviewMenuManager(this, branchManager);
+        playerMenuManager = new PlayerMenuManager(this, branchManager, reviewMenuManager);
+        reviewMenuManager.setPlayerMenuService(playerMenuManager);
+        playerStateManager = new PlayerStateManager(this, pluginConfig, worldManager, branchManager, selectionManager);
 
         registerCommands();
         registerListeners();
         backupManager.start();
+        playerMenuManager.start();
+        playerStateManager.start();
         mergeManager.recoverIncompleteMerges();
     }
 
@@ -142,9 +174,10 @@ public final class WorldGitPlugin extends JavaPlugin {
         PluginCommand command = Objects.requireNonNull(getCommand("wg"), "未注册 wg 命令");
         WorldGitCommand executor = new WorldGitCommand(
                 new BranchCommands(new ManagerBranchService(branchManager)),
-                new ReviewCommands(new ManagerReviewService(branchManager)),
+                new ReviewCommands(new ManagerReviewService(branchManager, reviewMenuManager)),
                 new AdminCommands(new ManagerAdminService(this, branchManager, lockManager, backupManager)),
-                new InviteCommands(new ManagerInviteService(branchManager))
+                new InviteCommands(new ManagerInviteService(branchManager)),
+                playerMenuManager
         );
         command.setExecutor(executor);
         command.setTabCompleter(executor);
@@ -160,14 +193,30 @@ public final class WorldGitPlugin extends JavaPlugin {
                 this
         );
         getServer().getPluginManager().registerEvents(
+                new BranchEditProtectionListener(branchManager, worldManager),
+                this
+        );
+        getServer().getPluginManager().registerEvents(
                 new PlayerConnectionListener(new ManagerConnectionService(branchManager, worldManager)),
+                this
+        );
+        getServer().getPluginManager().registerEvents(
+                new PlayerStateListener(playerStateManager),
+                this
+        );
+        getServer().getPluginManager().registerEvents(
+                reviewMenuManager,
+                this
+        );
+        getServer().getPluginManager().registerEvents(
+                playerMenuManager,
                 this
         );
     }
 
     @Override
     public ChunkGenerator getDefaultWorldGenerator(String worldName, String id) {
-        if (worldName != null && worldName.startsWith(pluginConfig.branchWorldPrefix())) {
+        if (worldManager != null && worldManager.isBranchWorld(worldName)) {
             return new VoidChunkGenerator();
         }
         return super.getDefaultWorldGenerator(worldName, id);

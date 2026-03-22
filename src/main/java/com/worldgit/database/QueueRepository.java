@@ -205,6 +205,14 @@ public final class QueueRepository {
         }
     }
 
+    public Optional<QueueEntry> findByPlayerQuietly(UUID playerUuid) {
+        try {
+            return findByPlayer(playerUuid);
+        } catch (SQLException exception) {
+            throw new IllegalStateException("查询排队条目失败", exception);
+        }
+    }
+
     private void bindEntry(PreparedStatement statement, QueueEntry entry) throws SQLException {
         statement.setString(1, entry.playerUuid().toString());
         statement.setString(2, entry.playerName());

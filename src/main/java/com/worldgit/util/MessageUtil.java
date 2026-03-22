@@ -10,8 +10,10 @@ import org.bukkit.command.CommandSender;
  */
 public final class MessageUtil {
 
+    private static final String DEFAULT_DISPLAY_PREFIX = "WorldGit";
     private static final MiniMessage MINI_MESSAGE = MiniMessage.miniMessage();
     private static final LegacyComponentSerializer LEGACY = LegacyComponentSerializer.legacySection();
+    private static volatile String displayPrefix = DEFAULT_DISPLAY_PREFIX;
 
     private MessageUtil() {
     }
@@ -24,24 +26,42 @@ public final class MessageUtil {
         return LEGACY.deserialize(message);
     }
 
+    public static void setDisplayPrefix(String value) {
+        if (value == null || value.isBlank()) {
+            displayPrefix = DEFAULT_DISPLAY_PREFIX;
+            return;
+        }
+        displayPrefix = value.trim();
+    }
+
+    public static String displayPrefixText() {
+        return displayPrefix;
+    }
+
+    public static String title(String suffix) {
+        return displayPrefixText() + " " + suffix;
+    }
+
     public static Component prefix() {
-        return mini("<gold>[<bold>WorldGit</bold>]</gold> ");
+        return mini("<#f59e0b>✦ "
+                + escape(displayPrefixText())
+                + " ✦ » </#f59e0b>");
     }
 
     public static Component info(String message) {
-        return prefix().append(mini("<white>" + escape(message) + "</white>"));
+        return prefix().append(mini("<#dbeafe>" + escape(message) + "</#dbeafe>"));
     }
 
     public static Component success(String message) {
-        return prefix().append(mini("<green>" + escape(message) + "</green>"));
+        return prefix().append(mini("<#86efac>" + escape(message) + "</#86efac>"));
     }
 
     public static Component warning(String message) {
-        return prefix().append(mini("<yellow>" + escape(message) + "</yellow>"));
+        return prefix().append(mini("<#fde68a>" + escape(message) + "</#fde68a>"));
     }
 
     public static Component error(String message) {
-        return prefix().append(mini("<red>" + escape(message) + "</red>"));
+        return prefix().append(mini("<#fca5a5>" + escape(message) + "</#fca5a5>"));
     }
 
     public static void sendInfo(CommandSender sender, String message) {

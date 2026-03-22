@@ -1,10 +1,12 @@
 package com.worldgit.command;
 
 import com.worldgit.util.MessageUtil;
+import com.worldgit.util.PlayerMenuService;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
+import org.bukkit.entity.Player;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -18,25 +20,31 @@ public final class WorldGitCommand implements CommandExecutor, TabCompleter {
     private final ReviewCommands reviewCommands;
     private final AdminCommands adminCommands;
     private final InviteCommands inviteCommands;
+    private final PlayerMenuService playerMenuService;
 
     public WorldGitCommand() {
-        this(new BranchCommands(), new ReviewCommands(), new AdminCommands(), new InviteCommands());
+        this(new BranchCommands(), new ReviewCommands(), new AdminCommands(), new InviteCommands(), PlayerMenuService.noop());
     }
 
     public WorldGitCommand(BranchCommands branchCommands,
                            ReviewCommands reviewCommands,
                            AdminCommands adminCommands,
-                           InviteCommands inviteCommands) {
+                           InviteCommands inviteCommands,
+                           PlayerMenuService playerMenuService) {
         this.branchCommands = branchCommands;
         this.reviewCommands = reviewCommands;
         this.adminCommands = adminCommands;
         this.inviteCommands = inviteCommands;
+        this.playerMenuService = playerMenuService;
     }
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         try {
             if (args.length == 0) {
+                if (sender instanceof Player player && playerMenuService.openMainMenu(player)) {
+                    return true;
+                }
                 sendHelp(sender);
                 return true;
             }
@@ -44,8 +52,9 @@ public final class WorldGitCommand implements CommandExecutor, TabCompleter {
             String head = args[0].toLowerCase();
             String[] tail = slice(args);
             return switch (head) {
-                case "create", "abandon", "list", "info", "tp", "teleport", "return", "queue" -> branchCommands.execute(sender, args);
-                case "submit", "confirm", "review" -> routeReview(sender, head, tail);
+                case "create", "abandon", "list", "info", "tp", "teleport", "return", "queue",
+                        "pos1", "pos2", "selection", "clearselection" -> branchCommands.execute(sender, args);
+                case "submit", "confirm", "forceedit", "review" -> routeReview(sender, head, tail);
                 case "admin" -> adminCommands.execute(sender, tail);
                 case "invite", "uninvite" -> inviteCommands.execute(sender, args);
                 case "help", "?" -> {
@@ -75,8 +84,9 @@ public final class WorldGitCommand implements CommandExecutor, TabCompleter {
         String head = args[0].toLowerCase();
         String[] tail = slice(args);
         return switch (head) {
-            case "create", "abandon", "list", "info", "tp", "teleport", "return", "queue" -> branchCommands.complete(sender, args);
-            case "submit", "confirm", "review" -> reviewComplete(sender, head, tail);
+            case "create", "abandon", "list", "info", "tp", "teleport", "return", "queue",
+                    "pos1", "pos2", "selection", "clearselection" -> branchCommands.complete(sender, args);
+            case "submit", "confirm", "forceedit", "review" -> reviewComplete(sender, head, tail);
             case "admin" -> adminCommands.complete(sender, tail);
             case "invite", "uninvite" -> inviteCommands.complete(sender, args);
             default -> List.of();
@@ -98,13 +108,14 @@ public final class WorldGitCommand implements CommandExecutor, TabCompleter {
     }
 
     private void sendHelp(CommandSender sender) {
-        MessageUtil.sendInfo(sender, "可用命令: /wg create, /wg submit [id], /wg review list, /wg admin <sub>, /wg invite <player>, /wg help");
+        MessageUtil.sendInfo(sender, "可用命令: /wg pos1, /wg pos2, /wg create, /wg submit [id], /wg confirm [id], /wg forceedit [id], /wg review list, /wg admin <sub>");
     }
 
     private List<String> rootSuggestions(String prefix) {
         List<String> candidates = List.of(
                 "create", "abandon", "list", "info", "tp", "return", "queue",
-                "submit", "confirm", "review",
+                "pos1", "pos2", "selection", "clearselection",
+                "submit", "confirm", "forceedit", "review",
                 "admin",
                 "invite", "uninvite",
                 "help"
