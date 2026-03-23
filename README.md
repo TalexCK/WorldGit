@@ -26,15 +26,19 @@ For the Chinese version, see [README.zh-CN.md](README.zh-CN.md).
 ## Core Features
 
 - Region-based branch creation from a WorldEdit selection
-- Automatic region locking to prevent conflicting work
+- Concurrent overlapping branches during the editing phase
 - Isolated branch worlds for editing
-- Book-driven player menu with branch, review, and merge-history chest UIs
-- Review queue: submit, approve, reject, confirm merge
+- Book-driven player menu with branch-detail, conflict-center, review, and merge-history chest UIs
+- Review flow: submit, approve, reject, confirm merge
+- Region-scoped rebase onto the latest main-world revision with three-way conflict detection
+- Conflict groups with `mine`, `theirs`, and manual resolution flows
+- Approved branches are re-checked before merge; stale approvals are revoked and require re-review
 - Approved branches become read-only until `/wg forceedit`
 - Sign-based coordinate input for `Pos1` / `Pos2` and merge messages
-- Crash-safe merge journal with startup recovery
+- Crash-safe merge journal and rebase journal with startup recovery
 - Invite system for shared branch access
-- Queue system for locked regions
+- Revision and commit tracking for the protected main world
+- Short-lived integration lock during merge only
 - Main-world protection to enforce read-only behavior
 - Periodic and manual backups
 
@@ -58,7 +62,7 @@ it.
 Output JAR:
 
 ```text
-build/libs/worldgit-1.0.0-SNAPSHOT.jar
+build/libs/worldgit-1.1.0.jar
 ```
 
 ## Installation
@@ -77,7 +81,6 @@ max-region-size-x: 50
 max-region-size-z: 50
 use-full-height: false
 max-active-branches: 2
-max-queue-entries: 1
 
 backup:
   enabled: true
@@ -107,7 +110,6 @@ database:
 - `/wg uninvite <player> [id]`
 - `/wg tp <id>`
 - `/wg return`
-- `/wg queue`
 
 ### Admin Commands
 
@@ -125,13 +127,26 @@ database:
 
 - Players receive a menu book in hotbar slot `9`.
 - Right-click the book to open the main player menu.
+- Branch cards now open a dedicated branch-detail chest UI.
 - `Pos1` / `Pos2` support:
   - Left click to use the current player coordinates
   - Right click to open a sign input
   - Coordinate syntax supports absolute values, `~`, `~+n`, and `~-n`
-- Approved branches are merged through a two-step Chest UI:
-  - Pick the approved branch first
-  - Confirm merge and enter a merge message through a sign input
+- Branch detail exposes:
+  - Teleport
+  - Rebase
+  - Conflict Center
+  - Submit for review
+  - Confirm merge
+  - Force edit
+  - Abandon branch
+- Conflict Center exposes:
+  - Conflict-group list
+  - Accept mine
+  - Accept theirs
+  - Teleport for manual resolution
+  - Mark resolved
+- Approved branches are merged through the final confirmation UI plus a sign-based merge message input.
 - The paper item in the lower-left area opens paged merge history with:
   - Builders
   - Approver
@@ -154,7 +169,6 @@ database:
 - `worldgit.branch.invite`
 - `worldgit.branch.tp`
 - `worldgit.branch.return`
-- `worldgit.branch.queue`
 
 ### Admin Permissions
 
@@ -169,6 +183,16 @@ database:
 
 ## Workflow
 
+## Terminology
+
+- WorldGit 1.1.0 uses **Rebase** as a product term, and that is acceptable because the plugin is intentionally Git-flavored.
+- Technically, this is **not** full Git commit-history rewriting.
+- It is a **region-scoped three-way replay** of the branch world onto the latest main-world revision:
+  - `base`: snapshot captured when the branch was created or last rebased
+  - `ours`: current branch-world blocks
+  - `theirs`: latest main-world blocks
+- In user-facing docs and UI, the clearest wording is: **Rebase (sync to latest main world)**.
+
 ### Create a Branch
 
 1. Stand in the main world.
@@ -176,23 +200,30 @@ database:
 3. Run `/wg create`.
 4. Edit inside the generated branch world.
 
-### Submit and Merge
+### Rebase and Resolve Conflicts
 
-1. Run `/wg submit [id]`.
-2. The branch stays editable while it is only waiting for review.
+1. Open the branch-detail UI from the player menu.
+2. If the main world has overlapping updates since your base revision, the branch is marked stale.
+3. Click **Rebase** to replay your region onto the latest main-world revision.
+4. If auto-merge is possible, the branch becomes clean immediately.
+5. If conflicts remain, open **Conflict Center**.
+6. Resolve each conflict group with:
+   - `mine`
+   - `theirs`
+   - manual fix in-world, then mark resolved
+7. Once all conflict groups are resolved, the branch becomes clean again.
+
+### Submit, Review, and Merge
+
+1. Run `/wg submit [id]` or submit through the branch-detail UI.
+2. If the branch is stale, submission is rejected until it is rebased.
 3. An admin reviews the branch.
 4. Once approved, the branch becomes read-only.
-5. If you want to keep editing after approval, run `/wg forceedit [id]` first to remove approval and return the branch to edit mode immediately.
-6. After editing again, run `/wg submit [id]` again for a new review.
-7. If no more edits are needed, run `/wg confirm [id]`, choose the target branch in the Chest UI, and enter a merge message.
-8. WorldGit merges the branch back into the main world.
-
-### Queue for a Locked Region
-
-1. Select the locked region.
-2. Run `/wg queue`.
-3. Wait for the unlock notification.
-4. Re-run `/wg create`.
+5. If you want to keep editing after approval, run `/wg forceedit [id]` first.
+6. After editing again, re-submit the branch for a fresh review.
+7. If the main world changes after approval but before merge, the approval is revoked automatically.
+8. Rebase the branch again, resolve conflicts if needed, and submit for re-review.
+9. If the branch is still current, run `/wg confirm [id]`, enter a merge message, and merge it back into the main world.
 
 ## Main-World Protection Coverage
 
@@ -230,9 +261,10 @@ Admins with `worldgit.admin.bypass` can bypass player-driven protection checks.
 3. Run `/wg create`.
 4. Verify:
    - A branch record exists in SQLite
-   - A region lock exists
    - A branch world named like `wg_<id>` exists
    - The selected blocks were copied correctly
+   - A base snapshot exists for the branch
+   - The branch stores a base revision
 
 ### Protection
 
@@ -241,37 +273,41 @@ Admins with `worldgit.admin.bypass` can bypass player-driven protection checks.
 3. Verify all changes are blocked unless the player has
    `worldgit.admin.bypass`.
 
-### Review and Merge
+### Rebase, Review, and Merge
 
-1. Modify blocks in the branch world.
-2. Run `/wg submit`.
-3. Verify the branch is still editable while it is only waiting for review.
-4. Approve with `/wg review approve <id>`.
-5. Verify the approved branch becomes read-only until `/wg forceedit <id>` is used.
-6. If no new edits were made after approval, run `/wg confirm <id>` to open the branch picker UI, then the final confirmation UI, then the merge-message sign input.
-7. If the branch needs more work after approval, run `/wg forceedit <id>` first.
-8. After editing again, submit it once more with `/wg submit`.
-9. Verify:
-   - Players are moved out safely
-   - Blocks are merged into the main world
-   - The lock is released
-   - The branch world is deleted
-   - The branch is marked `MERGED`
-   - Merge history shows builders, approver, merger, merge message, and region coordinates
-
-### Queue
-
-1. Let player A lock a region.
-2. Let player B select the same region and run `/wg queue`.
-3. Release the lock by merge or abandon.
-4. Verify player B gets notified.
+1. Let player A and player B create overlapping branches from the same region.
+2. Let player A edit and merge first.
+3. On player B, run `/wg submit`.
+4. Verify submission is rejected and the branch is marked stale.
+5. Use the branch-detail UI to run **Rebase**.
+6. If conflicts appear, verify Conflict Center can:
+   - list groups
+   - accept mine
+   - accept theirs
+   - teleport for manual repair
+   - mark a group resolved
+7. After the branch is clean, submit it again.
+8. Approve with `/wg review approve <id>`.
+9. Before merging, let another overlapping branch update the main world again.
+10. Run `/wg confirm <id>`.
+11. Verify the approval is revoked automatically and the branch must be rebased and re-reviewed.
+12. Complete the second rebase and submit again.
+13. Approve once more, then merge.
+14. Verify:
+    - Players are moved out safely
+    - Blocks are merged into the main world
+    - A short-lived merge lock is created and released
+    - A world commit entry is recorded
+    - The branch world is unloaded after merge and can be reopened from merge history if needed
+    - The branch is marked `MERGED`
+    - Merge history shows builders, approver, merger, merge message, and region coordinates
 
 ### Recovery
 
 1. Start a merge.
-2. Stop the server during the merge process.
+2. Stop the server during the merge or rebase process.
 3. Restart the server.
-4. Verify the merge journal resumes and the branch completes cleanly.
+4. Verify incomplete merge and rebase state is recovered cleanly.
 
 ### Backup
 

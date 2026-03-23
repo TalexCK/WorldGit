@@ -8,6 +8,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import org.bukkit.Bukkit;
+import org.bukkit.Color;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Particle;
@@ -23,6 +24,14 @@ public final class PlayerStateManager {
 
     private static final int BOUNDARY_STEP = 4;
     private static final int BOUNDARY_VIEW_RADIUS = 40;
+    private static final Particle.DustOptions EDITING_REGION_PARTICLE = new Particle.DustOptions(
+            Color.fromRGB(
+                    EditingRegionVisuals.REGION_RED,
+                    EditingRegionVisuals.REGION_GREEN,
+                    EditingRegionVisuals.REGION_BLUE
+            ),
+            1.0F
+    );
 
     private final WorldGitPlugin plugin;
     private final PluginConfig pluginConfig;
@@ -30,6 +39,9 @@ public final class PlayerStateManager {
     private final BranchManager branchManager;
     private final PlayerSelectionManager selectionManager;
     private final Map<UUID, PlayerStateSnapshot> managedWorldSnapshots = new ConcurrentHashMap<>();
+    private volatile String cachedEditingWorldName;
+    private volatile long cachedEditingWorldExpiresAt;
+    private volatile java.util.List<Branch> cachedEditingBranches = java.util.List.of();
     private BukkitTask actionBarTask;
 
     public PlayerStateManager(
@@ -91,6 +103,7 @@ public final class PlayerStateManager {
         for (Player player : Bukkit.getOnlinePlayers()) {
             refreshActionBar(player);
             renderBranchBoundary(player);
+            renderMainWorldEditingBoundaries(player);
         }
     }
 
@@ -258,6 +271,67 @@ public final class PlayerStateManager {
 
     private void spawnBoundaryParticle(Player player, int x, int y, int z) {
         player.spawnParticle(Particle.END_ROD, x + 0.5, y + 0.1, z + 0.5, 1, 0.0, 0.0, 0.0, 0.0);
+    }
+
+    private void renderMainWorldEditingBoundaries(Player player) {
+        World world = player.getWorld();
+        if (world == null || !pluginConfig.mainWorld().equals(world.getName())) {
+            return;
+        }
+
+        Location location = player.getLocation();
+        for (Branch branch : editingBranches(world.getName())) {
+            if (!isNearVisibleRange(location, branch.minX(), branch.minZ())
+                    && !isNearVisibleRange(location, branch.minX(), branch.maxZ())
+                    && !isNearVisibleRange(location, branch.maxX(), branch.minZ())
+                    && !isNearVisibleRange(location, branch.maxX(), branch.maxZ())) {
+                continue;
+            }
+
+            int y = Math.max(branch.minY(), Math.min(branch.maxY(), location.getBlockY()));
+            int minVisibleX = Math.max(branch.minX(), location.getBlockX() - BOUNDARY_VIEW_RADIUS);
+            int maxVisibleX = Math.min(branch.maxX(), location.getBlockX() + BOUNDARY_VIEW_RADIUS);
+            int minVisibleZ = Math.max(branch.minZ(), location.getBlockZ() - BOUNDARY_VIEW_RADIUS);
+            int maxVisibleZ = Math.min(branch.maxZ(), location.getBlockZ() + BOUNDARY_VIEW_RADIUS);
+
+            for (int x = minVisibleX; x <= maxVisibleX; x += BOUNDARY_STEP) {
+                spawnEditingBoundaryParticle(player, x, y, branch.minZ());
+                spawnEditingBoundaryParticle(player, x, y, branch.maxZ());
+            }
+            for (int z = minVisibleZ; z <= maxVisibleZ; z += BOUNDARY_STEP) {
+                spawnEditingBoundaryParticle(player, branch.minX(), y, z);
+                spawnEditingBoundaryParticle(player, branch.maxX(), y, z);
+            }
+            for (int markerY = Math.max(branch.minY(), y - 4); markerY <= Math.min(branch.maxY(), y + 4); markerY += 2) {
+                if (isNearVisibleRange(location, branch.minX(), branch.minZ())) {
+                    spawnEditingBoundaryParticle(player, branch.minX(), markerY, branch.minZ());
+                }
+                if (isNearVisibleRange(location, branch.minX(), branch.maxZ())) {
+                    spawnEditingBoundaryParticle(player, branch.minX(), markerY, branch.maxZ());
+                }
+                if (isNearVisibleRange(location, branch.maxX(), branch.minZ())) {
+                    spawnEditingBoundaryParticle(player, branch.maxX(), markerY, branch.minZ());
+                }
+                if (isNearVisibleRange(location, branch.maxX(), branch.maxZ())) {
+                    spawnEditingBoundaryParticle(player, branch.maxX(), markerY, branch.maxZ());
+                }
+            }
+        }
+    }
+
+    private java.util.List<Branch> editingBranches(String worldName) {
+        long now = System.currentTimeMillis();
+        if (worldName.equals(cachedEditingWorldName) && now < cachedEditingWorldExpiresAt) {
+            return cachedEditingBranches;
+        }
+        cachedEditingWorldName = worldName;
+        cachedEditingBranches = branchManager.listEditingBranches(worldName);
+        cachedEditingWorldExpiresAt = now + 3_000L;
+        return cachedEditingBranches;
+    }
+
+    private void spawnEditingBoundaryParticle(Player player, int x, int y, int z) {
+        player.spawnParticle(Particle.DUST, x + 0.5, y + 0.1, z + 0.5, 1, 0.0, 0.0, 0.0, 0.0, EDITING_REGION_PARTICLE);
     }
 
     private record PlayerStateSnapshot(GameMode gameMode, boolean allowFlight, boolean flying) {

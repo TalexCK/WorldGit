@@ -66,4 +66,8 @@ public final class QueueManager {
     public QueueRepository queueRepository() {
         return queueRepository;
     }
+
+    public void clearAll() {
+        queueRepository.deleteAllQuietly();
+    }
 }

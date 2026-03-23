@@ -37,7 +37,6 @@ public final class BranchCommands {
             case "info" -> handleInfo(sender, tail);
             case "tp", "teleport" -> handleTeleport(sender, tail);
             case "return" -> handleReturn(sender);
-            case "queue" -> handleQueue(sender);
             case "pos1" -> handlePos1(sender, tail);
             case "pos2" -> handlePos2(sender, tail);
             case "selection" -> handleSelection(sender);
@@ -51,7 +50,7 @@ public final class BranchCommands {
 
     public List<String> complete(CommandSender sender, String[] args) {
         if (args.length <= 1) {
-            return prefixMatch(args, List.of("create", "abandon", "list", "info", "tp", "return", "queue",
+            return prefixMatch(args, List.of("create", "abandon", "list", "info", "tp", "return",
                     "pos1", "pos2", "selection", "clearselection"));
         }
         String subCommand = args[0].toLowerCase();
@@ -127,17 +126,6 @@ public final class BranchCommands {
         return true;
     }
 
-    private boolean handleQueue(CommandSender sender) {
-        if (!(sender instanceof Player player)) {
-            MessageUtil.sendError(sender, "只有玩家可以排队。");
-            return true;
-        }
-        if (!branchService.queue(player)) {
-            MessageUtil.sendWarning(sender, "排队系统尚未接入实际管理器。");
-        }
-        return true;
-    }
-
     private boolean handlePos1(CommandSender sender, String[] args) {
         return handleSelectionPoint(sender, args, true);
     }
@@ -169,7 +157,7 @@ public final class BranchCommands {
     }
 
     private void sendBranchHelp(CommandSender sender) {
-        MessageUtil.sendInfo(sender, "可用命令: /wg pos1 [x y z], /wg pos2 [x y z], /wg selection, /wg clearselection, /wg create, /wg queue");
+        MessageUtil.sendInfo(sender, "可用命令: /wg pos1 [x y z], /wg pos2 [x y z], /wg selection, /wg clearselection, /wg create");
     }
 
     private static String[] slice(String[] args) {

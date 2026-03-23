@@ -52,7 +52,7 @@ public final class WorldGitCommand implements CommandExecutor, TabCompleter {
             String head = args[0].toLowerCase();
             String[] tail = slice(args);
             return switch (head) {
-                case "create", "abandon", "list", "info", "tp", "teleport", "return", "queue",
+                case "create", "abandon", "list", "info", "tp", "teleport", "return",
                         "pos1", "pos2", "selection", "clearselection" -> branchCommands.execute(sender, args);
                 case "submit", "confirm", "forceedit", "review" -> routeReview(sender, head, tail);
                 case "admin" -> adminCommands.execute(sender, tail);
@@ -84,7 +84,7 @@ public final class WorldGitCommand implements CommandExecutor, TabCompleter {
         String head = args[0].toLowerCase();
         String[] tail = slice(args);
         return switch (head) {
-            case "create", "abandon", "list", "info", "tp", "teleport", "return", "queue",
+            case "create", "abandon", "list", "info", "tp", "teleport", "return",
                     "pos1", "pos2", "selection", "clearselection" -> branchCommands.complete(sender, args);
             case "submit", "confirm", "forceedit", "review" -> reviewComplete(sender, head, tail);
             case "admin" -> adminCommands.complete(sender, tail);
@@ -113,7 +113,7 @@ public final class WorldGitCommand implements CommandExecutor, TabCompleter {
 
     private List<String> rootSuggestions(String prefix) {
         List<String> candidates = List.of(
-                "create", "abandon", "list", "info", "tp", "return", "queue",
+                "create", "abandon", "list", "info", "tp", "return",
                 "pos1", "pos2", "selection", "clearselection",
                 "submit", "confirm", "forceedit", "review",
                 "admin",

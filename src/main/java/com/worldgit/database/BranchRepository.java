@@ -234,6 +234,28 @@ public final class BranchRepository {
         });
     }
 
+    public boolean resetToActive(String branchId, String note) throws SQLException {
+        return databaseManager.withConnection(connection -> {
+            try (PreparedStatement statement = connection.prepareStatement(
+                    """
+                    UPDATE branches
+                    SET status = 'ACTIVE',
+                        submitted_at = NULL,
+                        reviewed_by = NULL,
+                        reviewed_at = NULL,
+                        review_note = ?,
+                        merged_by = NULL,
+                        merge_message = NULL
+                    WHERE id = ? AND status IN ('SUBMITTED', 'APPROVED', 'REJECTED', 'ACTIVE')
+                    """
+            )) {
+                statement.setString(1, note);
+                statement.setString(2, branchId);
+                return statement.executeUpdate() > 0;
+            }
+        });
+    }
+
     private boolean updateMergeMetadata(String branchId, UUID mergedBy, String mergeMessage) throws SQLException {
         return databaseManager.withConnection(connection -> {
             try (PreparedStatement statement = connection.prepareStatement(
@@ -408,6 +430,14 @@ public final class BranchRepository {
             return reopenApprovedBranch(branchId);
         } catch (SQLException exception) {
             throw new IllegalStateException("重置审核通过状态失败", exception);
+        }
+    }
+
+    public boolean resetToActiveUnchecked(String branchId, String note) {
+        try {
+            return resetToActive(branchId, note);
+        } catch (SQLException exception) {
+            throw new IllegalStateException("重置分支为编辑状态失败", exception);
         }
     }
 

@@ -173,6 +173,16 @@ public final class QueueRepository {
         });
     }
 
+    public int deleteAll() throws SQLException {
+        return databaseManager.withConnection(connection -> {
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "DELETE FROM queue_entries"
+            )) {
+                return statement.executeUpdate();
+            }
+        });
+    }
+
     public void insert(QueueEntry entry) {
         try {
             enqueue(entry);
@@ -210,6 +220,14 @@ public final class QueueRepository {
             return findByPlayer(playerUuid);
         } catch (SQLException exception) {
             throw new IllegalStateException("查询排队条目失败", exception);
+        }
+    }
+
+    public void deleteAllQuietly() {
+        try {
+            deleteAll();
+        } catch (SQLException exception) {
+            throw new IllegalStateException("清理排队条目失败", exception);
         }
     }
 

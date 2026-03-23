@@ -26,7 +26,7 @@ import java.util.stream.Collectors;
  */
 public final class DatabaseManager implements Closeable {
 
-    private static final int SCHEMA_VERSION = 2;
+    private static final int SCHEMA_VERSION = 3;
 
     private final Path databaseFile;
     private final String jdbcUrl;
@@ -79,6 +79,23 @@ public final class DatabaseManager implements Closeable {
                 connection.setAutoCommit(previousAutoCommit);
             }
             return null;
+        });
+    }
+
+    public <T> T withTransactionResult(SqlFunction<Connection, T> action) throws SQLException {
+        return withConnection(connection -> {
+            boolean previousAutoCommit = connection.getAutoCommit();
+            connection.setAutoCommit(false);
+            try {
+                T result = action.apply(connection);
+                connection.commit();
+                return result;
+            } catch (SQLException exception) {
+                connection.rollback();
+                throw exception;
+            } finally {
+                connection.setAutoCommit(previousAutoCommit);
+            }
         });
     }
 
@@ -448,6 +465,83 @@ public final class DatabaseManager implements Closeable {
                 new Migration(2, List.of(
                         "ALTER TABLE branches ADD COLUMN merged_by TEXT",
                         "ALTER TABLE branches ADD COLUMN merge_message TEXT"
+                )),
+                new Migration(3, List.of(
+                        """
+                        CREATE TABLE IF NOT EXISTS branch_sync_meta (
+                            branch_id TEXT PRIMARY KEY REFERENCES branches(id) ON DELETE CASCADE,
+                            base_revision INTEGER NOT NULL DEFAULT 0,
+                            last_rebased_revision INTEGER,
+                            last_reviewed_revision INTEGER,
+                            sync_state TEXT NOT NULL DEFAULT 'CLEAN',
+                            snapshot_path TEXT NOT NULL DEFAULT '',
+                            pending_rebase_revision INTEGER,
+                            pending_snapshot_path TEXT,
+                            working_snapshot_path TEXT,
+                            unresolved_group_count INTEGER NOT NULL DEFAULT 0,
+                            stale_reason TEXT
+                        )
+                        """,
+                        """
+                        CREATE TABLE IF NOT EXISTS world_heads (
+                            main_world TEXT PRIMARY KEY,
+                            head_revision INTEGER NOT NULL DEFAULT 0
+                        )
+                        """,
+                        """
+                        CREATE TABLE IF NOT EXISTS world_commits (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            main_world TEXT NOT NULL,
+                            revision INTEGER NOT NULL,
+                            branch_id TEXT UNIQUE,
+                            commit_kind TEXT NOT NULL,
+                            min_x INTEGER NOT NULL,
+                            min_y INTEGER NOT NULL,
+                            min_z INTEGER NOT NULL,
+                            max_x INTEGER NOT NULL,
+                            max_y INTEGER NOT NULL,
+                            max_z INTEGER NOT NULL,
+                            author_uuid TEXT,
+                            author_name TEXT,
+                            message TEXT,
+                            created_at INTEGER NOT NULL,
+                            UNIQUE(main_world, revision)
+                        )
+                        """,
+                        """
+                        CREATE TABLE IF NOT EXISTS rebase_journal (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            branch_id TEXT NOT NULL UNIQUE REFERENCES branches(id) ON DELETE CASCADE,
+                            phase TEXT NOT NULL,
+                            updated_at INTEGER NOT NULL
+                        )
+                        """,
+                        """
+                        CREATE TABLE IF NOT EXISTS conflict_groups (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+                            group_index INTEGER NOT NULL,
+                            min_x INTEGER NOT NULL,
+                            min_y INTEGER NOT NULL,
+                            min_z INTEGER NOT NULL,
+                            max_x INTEGER NOT NULL,
+                            max_y INTEGER NOT NULL,
+                            max_z INTEGER NOT NULL,
+                            block_count INTEGER NOT NULL,
+                            status TEXT NOT NULL,
+                            resolution TEXT,
+                            detail_path TEXT NOT NULL,
+                            created_at INTEGER NOT NULL,
+                            resolved_at INTEGER,
+                            UNIQUE(branch_id, group_index)
+                        )
+                        """,
+                        "CREATE INDEX IF NOT EXISTS idx_branch_sync_meta_state ON branch_sync_meta(sync_state)",
+                        "CREATE INDEX IF NOT EXISTS idx_world_commits_world_revision ON world_commits(main_world, revision)",
+                        "CREATE INDEX IF NOT EXISTS idx_world_commits_branch_id ON world_commits(branch_id)",
+                        "CREATE INDEX IF NOT EXISTS idx_conflict_groups_branch_id ON conflict_groups(branch_id)",
+                        "CREATE INDEX IF NOT EXISTS idx_conflict_groups_status ON conflict_groups(status)",
+                        "CREATE INDEX IF NOT EXISTS idx_rebase_journal_phase ON rebase_journal(phase)"
                 ))
         );
     }

@@ -15,6 +15,8 @@ public interface AdminService {
 
     boolean backup(CommandSender sender);
 
+    boolean sync(CommandSender sender);
+
     boolean locks(CommandSender sender);
 
     boolean list(CommandSender sender, String playerName);
@@ -37,6 +39,11 @@ public interface AdminService {
 
             @Override
             public boolean backup(CommandSender sender) {
+                return false;
+            }
+
+            @Override
+            public boolean sync(CommandSender sender) {
                 return false;
             }
 

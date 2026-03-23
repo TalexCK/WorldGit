@@ -4,11 +4,16 @@ import com.worldgit.WorldGitPlugin;
 import com.worldgit.config.PluginConfig;
 import com.worldgit.database.BranchRepository;
 import com.worldgit.model.Branch;
+import com.worldgit.model.BranchSyncInfo;
 import com.worldgit.model.BranchStatus;
+import com.worldgit.model.ConflictGroup;
 import com.worldgit.model.QueueEntry;
 import com.worldgit.model.RegionLock;
+import com.worldgit.model.WorldCommit;
 import com.worldgit.util.MessageUtil;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -27,6 +32,7 @@ public final class BranchManager {
     private final LockManager lockManager;
     private final QueueManager queueManager;
     private final MergeManager mergeManager;
+    private final RebaseManager rebaseManager;
     private final WorldManager worldManager;
     private final RegionCopyManager regionCopyManager;
     private final PlayerSelectionManager selectionManager;
@@ -42,6 +48,7 @@ public final class BranchManager {
             LockManager lockManager,
             QueueManager queueManager,
             MergeManager mergeManager,
+            RebaseManager rebaseManager,
             WorldManager worldManager,
             RegionCopyManager regionCopyManager,
             PlayerSelectionManager selectionManager,
@@ -53,6 +60,7 @@ public final class BranchManager {
         this.lockManager = lockManager;
         this.queueManager = queueManager;
         this.mergeManager = mergeManager;
+        this.rebaseManager = rebaseManager;
         this.worldManager = worldManager;
         this.regionCopyManager = regionCopyManager;
         this.selectionManager = selectionManager;
@@ -60,50 +68,103 @@ public final class BranchManager {
     }
 
     public Branch createBranch(Player player) {
-        return createBranchForOwner(player, player.getUniqueId(), player.getName(), player);
+        CreateBranchPreview preview = previewCreateBranch(player);
+        if (preview.hasOverlap()) {
+            throw new IllegalStateException("当前选区与已有未合并编辑区重叠，请先通过玩家面板确认后再创建。");
+        }
+        return createBranchConfirmed(player, preview.selection());
     }
 
     public Branch createAssignedBranch(Player selector, Player owner) {
-        return createBranchForOwner(selector, owner.getUniqueId(), owner.getName(), owner);
+        RegionCopyManager.SelectionBounds selection = readSelection(selector);
+        return createBranchForOwner(selector, owner.getUniqueId(), owner.getName(), owner, selection);
     }
 
     public void queueSelection(Player player) {
-        RegionCopyManager.SelectionBounds selection = readSelection(player);
-        List<RegionLock> conflicts = lockManager.findConflicts(
-                player.getWorld().getName(),
-                selection.minX(),
-                selection.minY(),
-                selection.minZ(),
-                selection.maxX(),
-                selection.maxY(),
-                selection.maxZ()
-        );
-        if (conflicts.isEmpty()) {
-            throw new IllegalStateException("所选区域当前未被锁定，无需排队");
-        }
-        queueManager.enqueue(player, selection);
+        throw new IllegalStateException("1.1.0 已取消编辑期排队；当前允许同一区域并发创建分支。");
     }
 
-    private Branch createBranchForOwner(Player selector, UUID ownerUuid, String ownerName, Player teleportTarget) {
+    public CreateBranchPreview previewCreateBranch(Player player) {
+        ensureInMainWorld(player, "只能在主世界创建分支");
+
+        long activeCount = branchRepository.countActiveBranches(player.getUniqueId());
+        if (activeCount >= pluginConfig.maxActiveBranches()) {
+            throw new IllegalStateException("你的活跃分支已达上限");
+        }
+
+        RegionCopyManager.SelectionBounds selection = readSelection(player);
+        List<SelectionOverlap> overlaps = new ArrayList<>();
+        for (Branch branch : listEditingBranches(player.getWorld().getName())) {
+            RegionCopyManager.SelectionBounds overlapBounds = intersect(selection, editableBounds(branch));
+            if (overlapBounds == null) {
+                continue;
+            }
+            overlaps.add(new SelectionOverlap(
+                    branch.id(),
+                    branch.ownerName(),
+                    branch.status(),
+                    editableBounds(branch),
+                    overlapBounds,
+                    selectionVolume(overlapBounds)
+            ));
+        }
+        overlaps.sort(Comparator.comparingLong(SelectionOverlap::overlapBlockCount).reversed());
+
+        long totalBlockCount = selectionVolume(selection);
+        long overlapBlockCount = unionVolume(overlaps.stream()
+                .map(SelectionOverlap::overlapBounds)
+                .toList());
+
+        return new CreateBranchPreview(
+                selection,
+                totalBlockCount,
+                overlapBlockCount,
+                totalBlockCount == 0L ? 0.0D : (double) overlapBlockCount / (double) totalBlockCount,
+                overlaps
+        );
+    }
+
+    public Branch createBranchConfirmed(Player player, RegionCopyManager.SelectionBounds selection) {
+        ensureInMainWorld(player, "只能在主世界创建分支");
+        if (selection == null) {
+            throw new IllegalStateException("确认创建失败：缺少选区信息。");
+        }
+
+        long activeCount = branchRepository.countActiveBranches(player.getUniqueId());
+        if (activeCount >= pluginConfig.maxActiveBranches()) {
+            throw new IllegalStateException("你的活跃分支已达上限");
+        }
+
+        regionCopyManager.validate(selection);
+        return createBranchForOwner(player, player.getUniqueId(), player.getName(), player, selection);
+    }
+
+    public List<Branch> listEditingBranches() {
+        return branchRepository.findAll().stream()
+                .filter(Branch::hasRegion)
+                .filter(this::isEditingBranch)
+                .sorted(Comparator.comparing(Branch::createdAt))
+                .toList();
+    }
+
+    public List<Branch> listEditingBranches(String mainWorld) {
+        return listEditingBranches().stream()
+                .filter(branch -> branch.mainWorld().equals(mainWorld))
+                .toList();
+    }
+
+    private Branch createBranchForOwner(
+            Player selector,
+            UUID ownerUuid,
+            String ownerName,
+            Player teleportTarget,
+            RegionCopyManager.SelectionBounds selection
+    ) {
         ensureInMainWorld(selector, "只能在主世界创建分支");
 
         long activeCount = branchRepository.countActiveBranches(ownerUuid);
         if (activeCount >= pluginConfig.maxActiveBranches()) {
             throw new IllegalStateException("目标玩家的活跃分支已达上限");
-        }
-
-        RegionCopyManager.SelectionBounds selection = readSelection(selector);
-        List<RegionLock> conflicts = lockManager.findConflicts(
-                selector.getWorld().getName(),
-                selection.minX(),
-                selection.minY(),
-                selection.minZ(),
-                selection.maxX(),
-                selection.maxY(),
-                selection.maxZ()
-        );
-        if (!conflicts.isEmpty()) {
-            throw new IllegalStateException("所选区域已被锁定，可使用 /wg queue 排队");
         }
 
         return createBranchFromBounds(
@@ -152,13 +213,6 @@ public final class BranchManager {
                     "只能在 main world 中创建分支或排队。"
             );
         }
-        if (getQueuedSelection(player).isPresent()) {
-            return new MenuCreateState(
-                    MenuCreateAction.DISABLED,
-                    "已有排队项",
-                    "请在等待区左键尝试创建，或右键删除排队。"
-            );
-        }
         PlayerSelectionManager.SelectionSnapshot snapshot = selectionManager.getSelection(player).orElse(null);
         if (snapshot == null || !snapshot.complete()) {
             return new MenuCreateState(
@@ -187,27 +241,10 @@ public final class BranchManager {
             );
         }
 
-        List<RegionLock> conflicts = lockManager.findConflicts(
-                player.getWorld().getName(),
-                bounds.minX(),
-                bounds.minY(),
-                bounds.minZ(),
-                bounds.maxX(),
-                bounds.maxY(),
-                bounds.maxZ()
-        );
-        if (!conflicts.isEmpty()) {
-            return new MenuCreateState(
-                    MenuCreateAction.QUEUE,
-                    "加入排队",
-                    "当前选区已被锁定，点击后加入排队队列。"
-            );
-        }
-
         return new MenuCreateState(
                 MenuCreateAction.CREATE,
                 "创建分支",
-                "当前选区可用，点击后立即创建分支。"
+                "当前选区可创建分支，点击后进入确认界面。"
         );
     }
 
@@ -216,51 +253,7 @@ public final class BranchManager {
     }
 
     public Branch createBranchFromQueue(Player player) {
-        QueueEntry entry = getQueuedSelection(player)
-                .orElseThrow(() -> new IllegalStateException("你当前没有排队中的区域"));
-        World sourceWorld = Bukkit.getWorld(entry.mainWorld());
-        if (sourceWorld == null) {
-            throw new IllegalStateException("排队对应的主世界不存在: " + entry.mainWorld());
-        }
-
-        long activeCount = branchRepository.countActiveBranches(player.getUniqueId());
-        if (activeCount >= pluginConfig.maxActiveBranches()) {
-            throw new IllegalStateException("你的活跃分支已达上限");
-        }
-
-        RegionCopyManager.SelectionBounds selection = new RegionCopyManager.SelectionBounds(
-                requireQueueCoordinate(entry.minX(), "minX"),
-                requireQueueCoordinate(entry.minY(), "minY"),
-                requireQueueCoordinate(entry.minZ(), "minZ"),
-                requireQueueCoordinate(entry.maxX(), "maxX"),
-                requireQueueCoordinate(entry.maxY(), "maxY"),
-                requireQueueCoordinate(entry.maxZ(), "maxZ")
-        );
-        regionCopyManager.validate(selection);
-
-        List<RegionLock> conflicts = lockManager.findConflicts(
-                sourceWorld.getName(),
-                selection.minX(),
-                selection.minY(),
-                selection.minZ(),
-                selection.maxX(),
-                selection.maxY(),
-                selection.maxZ()
-        );
-        if (!conflicts.isEmpty()) {
-            throw new IllegalStateException("该排队区域仍被锁定，请稍后再试");
-        }
-
-        Branch branch = createBranchFromBounds(
-                player.getUniqueId(),
-                player.getName(),
-                sourceWorld,
-                selection,
-                player,
-                sourceWorld.getSpawnLocation()
-        );
-        queueManager.clearPlayer(player.getUniqueId());
-        return branch;
+        throw new IllegalStateException("1.1.0 已取消编辑期排队，请直接使用创建分支。");
     }
 
     public void removeQueuedSelection(Player player) {
@@ -277,6 +270,20 @@ public final class BranchManager {
 
     public List<Branch> listAllBranches() {
         return branchRepository.findAll();
+    }
+
+    public void bootstrapLegacyBranches() {
+        for (Branch branch : branchRepository.findAll()) {
+            if (branch.status() == BranchStatus.MERGED || branch.status() == BranchStatus.ABANDONED) {
+                continue;
+            }
+            rebaseManager.ensureSyncInfo(branch);
+            if (branch.status() == BranchStatus.SUBMITTED || branch.status() == BranchStatus.APPROVED) {
+                branchRepository.resetToActiveUnchecked(branch.id(), "1.1.0 升级后请重新提交审核。");
+                rebaseManager.markNeedsRebase(branch, "1.1.0 升级后请执行 rebase，再重新提交审核。");
+                refreshCachedBranch(branch.id());
+            }
+        }
     }
 
     public List<Branch> listPendingReviews() {
@@ -331,6 +338,15 @@ public final class BranchManager {
         if (branch.status() != BranchStatus.ACTIVE && branch.status() != BranchStatus.REJECTED) {
             throw new IllegalStateException("当前状态不允许提交审核");
         }
+        BranchSyncInfo syncInfo = rebaseManager.ensureSyncInfo(branch);
+        if (syncInfo.unresolvedGroupCount() > 0 || syncInfo.syncState() == com.worldgit.model.BranchSyncState.HAS_CONFLICTS) {
+            throw new IllegalStateException("当前分支还有未解决冲突，请先进入冲突中心完成处理。");
+        }
+        List<WorldCommit> incomingCommits = rebaseManager.findIncomingCommits(branch);
+        if (!incomingCommits.isEmpty()) {
+            rebaseManager.markNeedsRebase(branch, "提交前检测到主线已更新，请先 rebase。");
+            throw new IllegalStateException("主线已有重叠更新，请先执行 rebase 并处理冲突。");
+        }
         branchRepository.markSubmitted(branch.id(), Instant.now().getEpochSecond());
         refreshCachedBranch(branch.id());
         notifyAdmins("分支已提交审核: " + branch.id() + " by " + player.getName());
@@ -341,7 +357,21 @@ public final class BranchManager {
         if (branch.status() != BranchStatus.SUBMITTED) {
             throw new IllegalStateException("只有待审核分支可以批准");
         }
+        BranchSyncInfo syncInfo = rebaseManager.ensureSyncInfo(branch);
+        if (syncInfo.unresolvedGroupCount() > 0 || syncInfo.syncState() != com.worldgit.model.BranchSyncState.CLEAN) {
+            branchRepository.resetToActiveUnchecked(branch.id(), "审核前检测到同步状态异常，请先 rebase 后重新提交。");
+            rebaseManager.markNeedsRebase(branch, "审核前检测到同步状态异常，请先 rebase。");
+            refreshCachedBranch(branch.id());
+            throw new IllegalStateException("该分支当前不是干净基线，已退回编辑状态，请先 rebase。");
+        }
+        if (rebaseManager.hasIncomingCommits(branch)) {
+            branchRepository.resetToActiveUnchecked(branch.id(), "审核前主线已更新，请先 rebase 后重新提交。");
+            rebaseManager.markNeedsRebase(branch, "审核前检测到主线已更新，请先 rebase。");
+            refreshCachedBranch(branch.id());
+            throw new IllegalStateException("主线已更新，审核失效，分支已退回编辑状态。");
+        }
         branchRepository.markReviewed(branch.id(), BranchStatus.APPROVED, admin.getUniqueId(), Instant.now().getEpochSecond(), note);
+        rebaseManager.recordReviewed(branch);
         refreshCachedBranch(branch.id());
         Player owner = Bukkit.getPlayer(branch.ownerUuid());
         if (owner != null && owner.isOnline()) {
@@ -371,6 +401,14 @@ public final class BranchManager {
 
     public void confirmBranch(Player player, String branchId, String mergeMessage) {
         Branch branch = resolveOwnedApprovedBranch(player, branchId);
+        BranchSyncInfo syncInfo = rebaseManager.ensureSyncInfo(branch);
+        long reviewRevision = syncInfo.lastReviewedRevision() == null ? syncInfo.baseRevision() : syncInfo.lastReviewedRevision();
+        if (rebaseManager.hasIncomingCommitsSince(branch, reviewRevision)) {
+            branchRepository.resetToActiveUnchecked(branch.id(), "确认合并前检测到主线已更新，请 rebase 后重新提交审核。");
+            rebaseManager.markNeedsRebase(branch, "确认合并前检测到主线已更新，需要 rebase 并重新审核。");
+            refreshCachedBranch(branch.id());
+            throw new IllegalStateException("主线在审核后发生了变化，已撤销审核，请先 rebase 并重新提交。");
+        }
         mergeManager.confirmMerge(player, branch, mergeMessage);
     }
 
@@ -538,16 +576,8 @@ public final class BranchManager {
             throw new IllegalStateException("无法卸载分支世界: " + branch.worldName());
         }
         lockManager.unlockBranch(branch.id());
-        queueManager.notifyRegionUnlocked(
-                branch.mainWorld(),
-                branch.minX(),
-                branch.minY(),
-                branch.minZ(),
-                branch.maxX(),
-                branch.maxY(),
-                branch.maxZ()
-        );
         branchRepository.markClosed(branch.id(), finalStatus, closedAt, note);
+        rebaseManager.cleanupBranchArtifacts(branch.id());
     }
 
     private void notifyAdmins(String message) {
@@ -599,17 +629,7 @@ public final class BranchManager {
         branchRepository.insert(branch);
         World branchWorld = null;
         try {
-            lockManager.createLock(
-                    branch.id(),
-                    branch.mainWorld(),
-                    branch.minX(),
-                    branch.minY(),
-                    branch.minZ(),
-                    branch.maxX(),
-                    branch.maxY(),
-                    branch.maxZ()
-            );
-
+            rebaseManager.ensureSyncInfo(branch);
             branchWorld = worldManager.createBranchWorld(branch.worldName());
             regionCopyManager.copyRegion(sourceWorld, branchWorld, regionCopyManager.expandForCopy(sourceWorld, selection));
         } catch (RuntimeException exception) {
@@ -632,11 +652,6 @@ public final class BranchManager {
 
     private void cleanupFailedBranchCreation(Branch branch, Location fallbackLocation, World branchWorld) {
         try {
-            lockManager.unlockBranch(branch.id());
-        } catch (RuntimeException ignored) {
-            // 清理阶段尽力而为，保留原始异常。
-        }
-        try {
             if (branchWorld != null || Bukkit.getWorld(branch.worldName()) != null) {
                 worldManager.deleteWorld(branch.worldName(), fallbackLocation);
             }
@@ -645,6 +660,11 @@ public final class BranchManager {
         }
         branchesByWorld.remove(branch.worldName());
         invitedPlayersByBranch.remove(branch.id());
+        try {
+            rebaseManager.cleanupBranchArtifacts(branch.id());
+        } catch (RuntimeException ignored) {
+            // 清理阶段尽力而为，保留原始异常。
+        }
         try {
             branchRepository.deleteByIdQuietly(branch.id());
         } catch (RuntimeException ignored) {
@@ -662,13 +682,6 @@ public final class BranchManager {
         lastMainWorldLocations.put(player.getUniqueId(), player.getLocation().clone());
     }
 
-    private int requireQueueCoordinate(Integer coordinate, String name) {
-        if (coordinate == null) {
-            throw new IllegalStateException("排队区域坐标缺失: " + name);
-        }
-        return coordinate;
-    }
-
     private RegionCopyManager.SelectionBounds readSelection(Player player) {
         ensureInMainWorld(player, "只能在主世界操作区域");
         RegionCopyManager.SelectionBounds bounds = selectionManager.requireSelection(player, pluginConfig.useFullHeight());
@@ -680,6 +693,82 @@ public final class BranchManager {
         if (!protectionManager.isMainWorld(player.getWorld())) {
             throw new IllegalStateException(message);
         }
+    }
+
+    private boolean isEditingBranch(Branch branch) {
+        return branch.status() != BranchStatus.MERGED && branch.status() != BranchStatus.ABANDONED;
+    }
+
+    private RegionCopyManager.SelectionBounds intersect(
+            RegionCopyManager.SelectionBounds left,
+            RegionCopyManager.SelectionBounds right
+    ) {
+        int minX = Math.max(left.minX(), right.minX());
+        int minY = Math.max(left.minY(), right.minY());
+        int minZ = Math.max(left.minZ(), right.minZ());
+        int maxX = Math.min(left.maxX(), right.maxX());
+        int maxY = Math.min(left.maxY(), right.maxY());
+        int maxZ = Math.min(left.maxZ(), right.maxZ());
+        if (minX > maxX || minY > maxY || minZ > maxZ) {
+            return null;
+        }
+        return new RegionCopyManager.SelectionBounds(minX, minY, minZ, maxX, maxY, maxZ);
+    }
+
+    private long selectionVolume(RegionCopyManager.SelectionBounds bounds) {
+        long width = (long) bounds.maxX() - bounds.minX() + 1L;
+        long height = (long) bounds.maxY() - bounds.minY() + 1L;
+        long depth = (long) bounds.maxZ() - bounds.minZ() + 1L;
+        return width * height * depth;
+    }
+
+    private long unionVolume(List<RegionCopyManager.SelectionBounds> boundsList) {
+        if (boundsList.isEmpty()) {
+            return 0L;
+        }
+
+        List<Integer> xs = new ArrayList<>();
+        List<Integer> ys = new ArrayList<>();
+        List<Integer> zs = new ArrayList<>();
+        for (RegionCopyManager.SelectionBounds bounds : boundsList) {
+            xs.add(bounds.minX());
+            xs.add(bounds.maxX() + 1);
+            ys.add(bounds.minY());
+            ys.add(bounds.maxY() + 1);
+            zs.add(bounds.minZ());
+            zs.add(bounds.maxZ() + 1);
+        }
+
+        List<Integer> xPoints = xs.stream().distinct().sorted().toList();
+        List<Integer> yPoints = ys.stream().distinct().sorted().toList();
+        List<Integer> zPoints = zs.stream().distinct().sorted().toList();
+
+        long volume = 0L;
+        for (int xi = 0; xi < xPoints.size() - 1; xi++) {
+            int x0 = xPoints.get(xi);
+            int x1 = xPoints.get(xi + 1);
+            for (int yi = 0; yi < yPoints.size() - 1; yi++) {
+                int y0 = yPoints.get(yi);
+                int y1 = yPoints.get(yi + 1);
+                for (int zi = 0; zi < zPoints.size() - 1; zi++) {
+                    int z0 = zPoints.get(zi);
+                    int z1 = zPoints.get(zi + 1);
+                    boolean covered = false;
+                    for (RegionCopyManager.SelectionBounds bounds : boundsList) {
+                        if (bounds.minX() <= x0 && bounds.maxX() + 1 >= x1
+                                && bounds.minY() <= y0 && bounds.maxY() + 1 >= y1
+                                && bounds.minZ() <= z0 && bounds.maxZ() + 1 >= z1) {
+                            covered = true;
+                            break;
+                        }
+                    }
+                    if (covered) {
+                        volume += (long) (x1 - x0) * (y1 - y0) * (z1 - z0);
+                    }
+                }
+            }
+        }
+        return volume;
     }
 
     private boolean isInvited(Branch branch, UUID playerUuid) {
@@ -708,5 +797,153 @@ public final class BranchManager {
     }
 
     public record MenuCreateState(MenuCreateAction action, String title, String detail) {
+    }
+
+    public record SelectionOverlap(
+            String branchId,
+            String ownerName,
+            BranchStatus status,
+            RegionCopyManager.SelectionBounds branchBounds,
+            RegionCopyManager.SelectionBounds overlapBounds,
+            long overlapBlockCount
+    ) {
+    }
+
+    public record CreateBranchPreview(
+            RegionCopyManager.SelectionBounds selection,
+            long totalBlockCount,
+            long overlapBlockCount,
+            double overlapRatio,
+            List<SelectionOverlap> overlaps
+    ) {
+        public boolean hasOverlap() {
+            return overlapBlockCount > 0L && !overlaps.isEmpty();
+        }
+    }
+
+    public BranchSyncInfo getSyncInfo(Branch branch) {
+        return rebaseManager.ensureSyncInfo(branch);
+    }
+
+    public BranchSyncInfo getSyncInfo(String branchId) {
+        return rebaseManager.ensureSyncInfo(requireBranch(branchId));
+    }
+
+    public RebaseManager.RebaseResult rebaseBranch(Player player, String branchId) {
+        Branch branch = resolveOwnedBranch(player, branchId);
+        if (branch.status() != BranchStatus.ACTIVE && branch.status() != BranchStatus.REJECTED) {
+            throw new IllegalStateException("只有编辑中的分支才能执行 rebase。");
+        }
+        return rebaseManager.rebase(branch);
+    }
+
+    public FetchPreview previewFetch(Player player, String branchId) {
+        return previewFetch(player, resolveOwnedBranch(player, branchId));
+    }
+
+    public FetchPreview previewFetch(Player player, Branch branch) {
+        World mainWorld = Bukkit.getWorld(branch.mainWorld());
+        if (mainWorld == null) {
+            throw new IllegalStateException("主世界不存在: " + branch.mainWorld());
+        }
+        RegionCopyManager.SelectionBounds editableBounds = editableBounds(branch);
+        RegionCopyManager.SelectionBounds copiedBounds = regionCopyManager.expandForCopy(mainWorld, editableBounds);
+        return new FetchPreview(
+                true,
+                "会保留创建分支时的编辑区，只更新分支复制范围内的外围区域。",
+                editableBounds,
+                copiedBounds
+        );
+    }
+
+    public FetchResult fetchOutsideSelection(Player player, String branchId) {
+        Branch branch = resolveOwnedBranch(player, branchId);
+        if (branch.status() != BranchStatus.ACTIVE && branch.status() != BranchStatus.REJECTED) {
+            throw new IllegalStateException("只有编辑中的分支才能执行 fetch。");
+        }
+        FetchPreview preview = previewFetch(player, branch);
+        if (!preview.available()) {
+            throw new IllegalStateException(preview.message());
+        }
+        int updatedBlocks = rebaseManager.fetchOutsideSelection(branch);
+        return new FetchResult(updatedBlocks, preview.protectedBounds(), preview.branchBounds());
+    }
+
+    public List<ConflictGroup> listConflictGroups(Player player, String branchId) {
+        Branch branch = resolveOwnedBranch(player, branchId);
+        return rebaseManager.listConflictGroups(branch.id());
+    }
+
+    public RebaseManager.ConflictGroupDetail describeConflictGroup(Player player, String branchId, int groupIndex) {
+        Branch branch = resolveOwnedBranch(player, branchId);
+        return rebaseManager.describeConflictGroup(branch, groupIndex);
+    }
+
+    public List<RebaseManager.ConflictBlockView> listConflictBlocks(Player player, String branchId, int groupIndex) {
+        Branch branch = resolveOwnedBranch(player, branchId);
+        return rebaseManager.listConflictBlocks(branch, groupIndex);
+    }
+
+    public void resolveConflictUseOurs(Player player, String branchId, int groupIndex) {
+        Branch branch = resolveOwnedBranch(player, branchId);
+        rebaseManager.resolveConflictUseOurs(branch, groupIndex);
+    }
+
+    public void resolveConflictUseTheirs(Player player, String branchId, int groupIndex) {
+        Branch branch = resolveOwnedBranch(player, branchId);
+        rebaseManager.resolveConflictUseTheirs(branch, groupIndex);
+    }
+
+    public void markConflictResolvedManually(Player player, String branchId, int groupIndex) {
+        Branch branch = resolveOwnedBranch(player, branchId);
+        rebaseManager.markConflictResolvedManually(branch, groupIndex);
+    }
+
+    public Location getConflictTeleportLocation(Player player, String branchId, int groupIndex) {
+        Branch branch = resolveOwnedBranch(player, branchId);
+        return rebaseManager.createConflictTeleportLocation(branch, groupIndex);
+    }
+
+    public List<Branch> listReReviewBranches() {
+        return branchRepository.findSubmitted().stream()
+                .filter(branch -> {
+                    BranchSyncInfo syncInfo = rebaseManager.ensureSyncInfo(branch);
+                    return syncInfo.lastReviewedRevision() != null;
+                })
+                .toList();
+    }
+
+    public long currentHeadRevision(String mainWorld) {
+        return rebaseManager.currentHeadRevision(mainWorld);
+    }
+
+    public List<WorldCommit> listIncomingCommits(Branch branch) {
+        return rebaseManager.findIncomingCommits(branch);
+    }
+
+    private RegionCopyManager.SelectionBounds editableBounds(Branch branch) {
+        return new RegionCopyManager.SelectionBounds(
+                branch.minX(),
+                branch.minY(),
+                branch.minZ(),
+                branch.maxX(),
+                branch.maxY(),
+                branch.maxZ()
+        );
+    }
+
+    public record FetchPreview(
+            boolean available,
+            String message,
+            RegionCopyManager.SelectionBounds protectedBounds,
+            RegionCopyManager.SelectionBounds branchBounds
+    ) {
+    }
+
+    public record FetchResult(
+            int updatedBlocks,
+            RegionCopyManager.SelectionBounds protectedBounds,
+            RegionCopyManager.SelectionBounds branchBounds
+    ) {
     }
 }

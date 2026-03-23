@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "com.worldgit"
-val pluginVersion = providers.gradleProperty("pluginVersion").getOrElse("1.0.0")
+val pluginVersion = providers.gradleProperty("pluginVersion").getOrElse("1.1.0")
 version = pluginVersion
 
 java {

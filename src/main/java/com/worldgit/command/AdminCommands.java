@@ -33,6 +33,7 @@ public final class AdminCommands {
             case "close" -> handleClose(sender, tail);
             case "assign" -> handleAssign(sender, tail);
             case "backup" -> handleBackup(sender);
+            case "sync" -> handleSync(sender);
             case "locks" -> handleLocks(sender);
             case "list" -> handleList(sender, tail);
             case "reload" -> handleReload(sender);
@@ -45,7 +46,7 @@ public final class AdminCommands {
 
     public List<String> complete(CommandSender sender, String[] args) {
         if (args.length <= 1) {
-            return prefixMatch(args, List.of("close", "assign", "backup", "locks", "list", "reload"));
+            return prefixMatch(args, List.of("close", "assign", "backup", "sync", "locks", "list", "reload"));
         }
         String subCommand = args[0].toLowerCase();
         return switch (subCommand) {
@@ -83,6 +84,13 @@ public final class AdminCommands {
         return true;
     }
 
+    private boolean handleSync(CommandSender sender) {
+        if (!adminService.sync(sender)) {
+            MessageUtil.sendWarning(sender, "手动 GitHub 同步尚未接入实际管理器。");
+        }
+        return true;
+    }
+
     private boolean handleLocks(CommandSender sender) {
         if (!adminService.locks(sender)) {
             MessageUtil.sendWarning(sender, "锁定列表尚未接入实际管理器。");
@@ -106,7 +114,7 @@ public final class AdminCommands {
     }
 
     private void sendHelp(CommandSender sender) {
-        MessageUtil.sendInfo(sender, "可用命令: /wg admin close <id>, /wg admin assign <player>, /wg admin backup, /wg admin locks, /wg admin list [player], /wg admin reload");
+        MessageUtil.sendInfo(sender, "可用命令: /wg admin close <id>, /wg admin assign <player>, /wg admin backup, /wg admin sync, /wg admin locks, /wg admin list [player], /wg admin reload");
     }
 
     private static String[] slice(String[] args) {

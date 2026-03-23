@@ -4,8 +4,10 @@ import com.worldgit.WorldGitPlugin;
 import com.worldgit.config.PluginConfig;
 import com.worldgit.database.BranchRepository;
 import com.worldgit.database.DatabaseManager;
+import com.worldgit.database.RevisionRepository;
 import com.worldgit.model.Branch;
 import com.worldgit.model.BranchStatus;
+import com.worldgit.model.RegionLock;
 import java.time.Instant;
 import java.util.List;
 import org.bukkit.Bukkit;
@@ -17,6 +19,7 @@ public final class MergeManager {
 
     private static final String PHASE_STARTED = "STARTED";
     private static final String PHASE_BLOCKS_COPIED = "BLOCKS_COPIED";
+    private static final String PHASE_COMMIT_RECORDED = "COMMIT_RECORDED";
     private static final String PHASE_UNLOCKED = "UNLOCKED";
     private static final String PHASE_WORLD_UNLOADED = "WORLD_UNLOADED";
     private static final String LEGACY_PHASE_WORLD_DELETED = "WORLD_DELETED";
@@ -26,6 +29,7 @@ public final class MergeManager {
     private final PluginConfig pluginConfig;
     private final DatabaseManager databaseManager;
     private final BranchRepository branchRepository;
+    private final RevisionRepository revisionRepository;
     private final LockManager lockManager;
     private final QueueManager queueManager;
     private final WorldManager worldManager;
@@ -36,6 +40,7 @@ public final class MergeManager {
             PluginConfig pluginConfig,
             DatabaseManager databaseManager,
             BranchRepository branchRepository,
+            RevisionRepository revisionRepository,
             LockManager lockManager,
             QueueManager queueManager,
             WorldManager worldManager,
@@ -45,6 +50,7 @@ public final class MergeManager {
         this.pluginConfig = pluginConfig;
         this.databaseManager = databaseManager;
         this.branchRepository = branchRepository;
+        this.revisionRepository = revisionRepository;
         this.lockManager = lockManager;
         this.queueManager = queueManager;
         this.worldManager = worldManager;
@@ -79,8 +85,16 @@ public final class MergeManager {
         String phase = databaseManager.getMergePhase(branchId).orElse(null);
 
         if (phase == null) {
+            ensureMergeLock(branch);
             databaseManager.upsertMergePhase(branchId, PHASE_STARTED);
             phase = PHASE_STARTED;
+        }
+
+        if (!PHASE_UNLOCKED.equals(phase)
+                && !PHASE_WORLD_UNLOADED.equals(phase)
+                && !PHASE_COMPLETE.equals(phase)
+                && !LEGACY_PHASE_WORLD_DELETED.equals(phase)) {
+            ensureMergeLock(branch);
         }
 
         if (PHASE_STARTED.equals(phase)) {
@@ -90,16 +104,13 @@ public final class MergeManager {
         }
 
         if (PHASE_BLOCKS_COPIED.equals(phase)) {
+            recordCommit(branch);
+            databaseManager.upsertMergePhase(branch.id(), PHASE_COMMIT_RECORDED);
+            phase = PHASE_COMMIT_RECORDED;
+        }
+
+        if (PHASE_COMMIT_RECORDED.equals(phase)) {
             lockManager.unlockBranch(branch.id());
-            queueManager.notifyRegionUnlocked(
-                    branch.mainWorld(),
-                    branch.minX(),
-                    branch.minY(),
-                    branch.minZ(),
-                    branch.maxX(),
-                    branch.maxY(),
-                    branch.maxZ()
-            );
             databaseManager.upsertMergePhase(branch.id(), PHASE_UNLOCKED);
             phase = PHASE_UNLOCKED;
         }
@@ -124,6 +135,36 @@ public final class MergeManager {
         }
     }
 
+    private void ensureMergeLock(Branch branch) {
+        List<RegionLock> conflicts = lockManager.findConflicts(
+                branch.mainWorld(),
+                branch.minX(),
+                branch.minY(),
+                branch.minZ(),
+                branch.maxX(),
+                branch.maxY(),
+                branch.maxZ()
+        ).stream()
+                .filter(lock -> !branch.id().equals(lock.branchId()))
+                .toList();
+        if (!conflicts.isEmpty()) {
+            throw new IllegalStateException("当前有其他重叠区域正在合并，请稍后重试。");
+        }
+        if (lockManager.findByBranchId(branch.id()).isPresent()) {
+            return;
+        }
+        lockManager.createLock(
+                branch.id(),
+                branch.mainWorld(),
+                branch.minX(),
+                branch.minY(),
+                branch.minZ(),
+                branch.maxX(),
+                branch.maxY(),
+                branch.maxZ()
+        );
+    }
+
     private void copyBlocks(Branch branch) {
         World source = worldManager.createBranchWorld(branch.worldName());
         World target = Bukkit.getWorld(branch.mainWorld());
@@ -146,6 +187,24 @@ public final class MergeManager {
                 branch.maxZ()
         );
         target.save();
+    }
+
+    private void recordCommit(Branch branch) {
+        revisionRepository.appendCommitUnchecked(
+                branch.mainWorld(),
+                branch.id(),
+                "MERGE",
+                branch.minX(),
+                branch.minY(),
+                branch.minZ(),
+                branch.maxX(),
+                branch.maxY(),
+                branch.maxZ(),
+                branch.mergedBy(),
+                branch.ownerName(),
+                normalizeMergeMessage(branch.mergeMessage()),
+                Instant.now()
+        );
     }
 
     private String normalizeMergeMessage(String mergeMessage) {

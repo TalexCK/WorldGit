@@ -3,6 +3,7 @@ package com.worldgit.util;
 import com.worldgit.WorldGitPlugin;
 import com.worldgit.manager.BackupManager;
 import com.worldgit.manager.BranchManager;
+import com.worldgit.manager.GitHubSyncManager;
 import com.worldgit.manager.LockManager;
 import com.worldgit.model.Branch;
 import com.worldgit.model.RegionLock;
@@ -17,17 +18,20 @@ public final class ManagerAdminService implements AdminService {
     private final BranchManager branchManager;
     private final LockManager lockManager;
     private final BackupManager backupManager;
+    private final GitHubSyncManager gitHubSyncManager;
 
     public ManagerAdminService(
             WorldGitPlugin plugin,
             BranchManager branchManager,
             LockManager lockManager,
-            BackupManager backupManager
+            BackupManager backupManager,
+            GitHubSyncManager gitHubSyncManager
     ) {
         this.plugin = plugin;
         this.branchManager = branchManager;
         this.lockManager = lockManager;
         this.backupManager = backupManager;
+        this.gitHubSyncManager = gitHubSyncManager;
     }
 
     @Override
@@ -59,6 +63,21 @@ public final class ManagerAdminService implements AdminService {
         requirePermission(sender, "worldgit.admin.backup");
         backupManager.createBackupSafe();
         MessageUtil.sendSuccess(sender, "已触发手动备份");
+        return true;
+    }
+
+    @Override
+    public boolean sync(CommandSender sender) {
+        requirePermission(sender, "worldgit.admin.sync");
+        String invalidReason = gitHubSyncManager.getInvalidReason();
+        if (invalidReason != null) {
+            throw new IllegalStateException("GitHub 同步不可用: " + invalidReason);
+        }
+        if (!gitHubSyncManager.syncNowSafe()) {
+            MessageUtil.sendInfo(sender, "GitHub 同步任务已在运行，已跳过本次触发。");
+            return true;
+        }
+        MessageUtil.sendSuccess(sender, "已触发手动 GitHub 同步");
         return true;
     }
 
