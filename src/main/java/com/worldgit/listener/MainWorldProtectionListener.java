@@ -5,8 +5,11 @@ import com.worldgit.util.ProtectionService;
 import java.util.Set;
 import org.bukkit.World;
 import org.bukkit.entity.ArmorStand;
+import org.bukkit.entity.Ambient;
+import org.bukkit.entity.Animals;
 import org.bukkit.entity.Hanging;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.WaterMob;
 import org.bukkit.event.Event;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -45,6 +48,7 @@ import org.bukkit.event.player.PlayerBucketFillEvent;
 import org.bukkit.event.player.PlayerPortalEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.event.entity.FoodLevelChangeEvent;
+import org.bukkit.event.world.ChunkLoadEvent;
 import org.bukkit.event.world.StructureGrowEvent;
 
 /**
@@ -60,6 +64,7 @@ public final class MainWorldProtectionListener implements Listener {
             "SPAWNER_EGG",
             "DISPENSE_EGG",
             "EGG",
+            "BREEDING",
             "PATROL",
             "RAID",
             "VILLAGE_DEFENSE",
@@ -212,8 +217,20 @@ public final class MainWorldProtectionListener implements Listener {
         if (world == null || !protectionService.isMainWorld(world)) {
             return;
         }
-        if (BLOCKED_SPAWN_REASONS.contains(event.getSpawnReason().name())) {
+        if (isPassiveMob(event.getEntity()) || BLOCKED_SPAWN_REASONS.contains(event.getSpawnReason().name())) {
             event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onChunkLoad(ChunkLoadEvent event) {
+        if (!protectionService.isMainWorld(event.getWorld())) {
+            return;
+        }
+        for (var entity : event.getChunk().getEntities()) {
+            if (isPassiveMob(entity)) {
+                entity.remove();
+            }
         }
     }
 
@@ -317,9 +334,6 @@ public final class MainWorldProtectionListener implements Listener {
         if (world == null || !protectionService.isMainWorld(world)) {
             return;
         }
-        if (player != null && protectionService.canBypass(player)) {
-            return;
-        }
         event.setCancelled(true);
     }
 
@@ -344,5 +358,9 @@ public final class MainWorldProtectionListener implements Listener {
 
     private boolean isSpawnEgg(String materialName) {
         return materialName != null && materialName.endsWith("_SPAWN_EGG");
+    }
+
+    private boolean isPassiveMob(org.bukkit.entity.Entity entity) {
+        return entity instanceof Animals || entity instanceof Ambient || entity instanceof WaterMob;
     }
 }

@@ -13,6 +13,7 @@ import com.worldgit.database.QueueRepository;
 import com.worldgit.generator.VoidChunkGenerator;
 import com.worldgit.listener.BranchWorldListener;
 import com.worldgit.listener.BranchEditProtectionListener;
+import com.worldgit.listener.MainWorldEnforcementListener;
 import com.worldgit.listener.MainWorldProtectionListener;
 import com.worldgit.listener.PlayerConnectionListener;
 import com.worldgit.listener.PlayerStateListener;
@@ -35,9 +36,17 @@ import com.worldgit.util.ManagerReviewService;
 import com.worldgit.util.MessageUtil;
 import com.worldgit.util.PlayerMenuManager;
 import com.worldgit.util.ReviewMenuManager;
+import com.worldgit.web.PluginWebServer;
 import java.io.IOException;
 import java.sql.SQLException;
 import java.util.Objects;
+import org.bukkit.Difficulty;
+import org.bukkit.GameMode;
+import org.bukkit.GameRule;
+import org.bukkit.World;
+import org.bukkit.entity.Ambient;
+import org.bukkit.entity.Animals;
+import org.bukkit.entity.WaterMob;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.generator.ChunkGenerator;
 import org.bukkit.event.HandlerList;
@@ -62,6 +71,7 @@ public final class WorldGitPlugin extends JavaPlugin {
     private PlayerStateManager playerStateManager;
     private ReviewMenuManager reviewMenuManager;
     private PlayerMenuManager playerMenuManager;
+    private PluginWebServer webServer;
 
     @Override
     public void onEnable() {
@@ -87,6 +97,9 @@ public final class WorldGitPlugin extends JavaPlugin {
         if (playerStateManager != null) {
             playerStateManager.stop();
         }
+        if (webServer != null) {
+            webServer.stop();
+        }
         if (databaseManager != null) {
             try {
                 databaseManager.close();
@@ -111,6 +124,9 @@ public final class WorldGitPlugin extends JavaPlugin {
         }
         if (playerStateManager != null) {
             playerStateManager.stop();
+        }
+        if (webServer != null) {
+            webServer.stop();
         }
         HandlerList.unregisterAll(this);
         if (databaseManager != null) {
@@ -164,10 +180,13 @@ public final class WorldGitPlugin extends JavaPlugin {
 
         registerCommands();
         registerListeners();
+        applyMainWorldSettings();
         backupManager.start();
         playerMenuManager.start();
         playerStateManager.start();
         mergeManager.recoverIncompleteMerges();
+        webServer = new PluginWebServer(this, pluginConfig, branchRepository);
+        webServer.start();
     }
 
     private void registerCommands() {
@@ -183,9 +202,52 @@ public final class WorldGitPlugin extends JavaPlugin {
         command.setTabCompleter(executor);
     }
 
+    private void applyMainWorldSettings() {
+        World mainWorld = getServer().getWorld(pluginConfig.mainWorld());
+        if (mainWorld == null) {
+            getLogger().warning("主世界 '" + pluginConfig.mainWorld() + "' 未加载，跳过世界规则设置");
+            return;
+        }
+
+        mainWorld.setDifficulty(Difficulty.PEACEFUL);
+        mainWorld.setGameRule(GameRule.DO_MOB_SPAWNING,   false);
+        mainWorld.setGameRule(GameRule.DO_DAYLIGHT_CYCLE, false);
+        mainWorld.setGameRule(GameRule.DO_WEATHER_CYCLE,  false);
+        mainWorld.setGameRule(GameRule.MOB_GRIEFING,      false);
+        mainWorld.setSpawnFlags(false, false);
+        mainWorld.setTime(6000); // 正午
+        mainWorld.setStorm(false);
+        mainWorld.setThundering(false);
+        mainWorld.setWeatherDuration(Integer.MAX_VALUE);
+
+        int removedPassiveEntities = 0;
+        for (var entity : mainWorld.getEntities()) {
+            if (entity instanceof Animals || entity instanceof Ambient || entity instanceof WaterMob) {
+                entity.remove();
+                removedPassiveEntities++;
+            }
+        }
+
+        // 对已在线的玩家立即生效
+        mainWorld.getPlayers().forEach(p -> {
+            p.setGameMode(GameMode.CREATIVE);
+            p.setAllowFlight(true);
+            p.setFallDistance(0.0f);
+        });
+
+        getLogger().info(
+                "主世界规则已设置：和平 / 创造 / 正午 / 晴天 / 无生物生成"
+                        + (removedPassiveEntities > 0 ? " / 已清理被动生物 " + removedPassiveEntities + " 个" : "")
+        );
+    }
+
     private void registerListeners() {
         getServer().getPluginManager().registerEvents(
                 new MainWorldProtectionListener(protectionManager),
+                this
+        );
+        getServer().getPluginManager().registerEvents(
+                new MainWorldEnforcementListener(this, pluginConfig),
                 this
         );
         getServer().getPluginManager().registerEvents(

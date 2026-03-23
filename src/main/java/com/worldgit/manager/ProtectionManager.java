@@ -24,6 +24,6 @@ public final class ProtectionManager implements ProtectionService {
 
     @Override
     public boolean canBypass(Player player) {
-        return false;
+        return player != null && hasBypass(player);
     }
 }

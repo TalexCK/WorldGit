@@ -128,6 +128,18 @@ public final class BranchRepository {
         });
     }
 
+    public List<Branch> listRecentCreated(int limit) throws SQLException {
+        return listRecentByTimestamp("created_at", false, Math.max(1, limit));
+    }
+
+    public List<Branch> listRecentSubmitted(int limit) throws SQLException {
+        return listRecentByTimestamp("submitted_at", true, Math.max(1, limit));
+    }
+
+    public List<Branch> listRecentMerged(int limit) throws SQLException {
+        return listRecentByTimestamp("merged_at", true, Math.max(1, limit));
+    }
+
     public List<Branch> listActiveByOwner(UUID ownerUuid) throws SQLException {
         return databaseManager.withConnection(connection -> {
             List<Branch> branches = new ArrayList<>();
@@ -339,6 +351,30 @@ public final class BranchRepository {
         }
     }
 
+    public List<Branch> listRecentCreatedUnchecked(int limit) {
+        try {
+            return listRecentCreated(limit);
+        } catch (SQLException exception) {
+            throw new IllegalStateException("查询最近创建记录失败", exception);
+        }
+    }
+
+    public List<Branch> listRecentSubmittedUnchecked(int limit) {
+        try {
+            return listRecentSubmitted(limit);
+        } catch (SQLException exception) {
+            throw new IllegalStateException("查询最近提交记录失败", exception);
+        }
+    }
+
+    public List<Branch> listRecentMergedUnchecked(int limit) {
+        try {
+            return listRecentMerged(limit);
+        } catch (SQLException exception) {
+            throw new IllegalStateException("查询最近合并记录失败", exception);
+        }
+    }
+
     public Optional<Branch> findLatestOwnedActiveBranch(UUID ownerUuid) {
         try {
             return listActiveByOwner(ownerUuid).stream().findFirst();
@@ -482,6 +518,24 @@ public final class BranchRepository {
             List<Branch> branches = new ArrayList<>();
             try (PreparedStatement statement = connection.prepareStatement(sql)) {
                 statement.setString(1, value);
+                try (ResultSet resultSet = statement.executeQuery()) {
+                    while (resultSet.next()) {
+                        branches.add(mapBranch(resultSet));
+                    }
+                }
+            }
+            return branches;
+        });
+    }
+
+    private List<Branch> listRecentByTimestamp(String columnName, boolean requireNotNull, int limit) throws SQLException {
+        return databaseManager.withConnection(connection -> {
+            String sql = requireNotNull
+                    ? "SELECT * FROM branches WHERE " + columnName + " IS NOT NULL ORDER BY " + columnName + " DESC LIMIT ?"
+                    : "SELECT * FROM branches ORDER BY " + columnName + " DESC LIMIT ?";
+            List<Branch> branches = new ArrayList<>();
+            try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                statement.setInt(1, limit);
                 try (ResultSet resultSet = statement.executeQuery()) {
                     while (resultSet.next()) {
                         branches.add(mapBranch(resultSet));
