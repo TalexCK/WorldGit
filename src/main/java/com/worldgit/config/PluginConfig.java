@@ -20,6 +20,12 @@ public final class PluginConfig {
     private final String branchWorldDirectory;
     private final String branchWorldPrefix;
     private final String databaseFile;
+    private final boolean webEnabled;
+    private final String webHost;
+    private final int webPort;
+    private final String webStaticDirectory;
+    private final int webRecentLimit;
+    private final String webBlueMapUrl;
 
     private PluginConfig(
             String displayPrefix,
@@ -35,7 +41,13 @@ public final class PluginConfig {
             String backupDirectory,
             String branchWorldDirectory,
             String branchWorldPrefix,
-            String databaseFile
+            String databaseFile,
+            boolean webEnabled,
+            String webHost,
+            int webPort,
+            String webStaticDirectory,
+            int webRecentLimit,
+            String webBlueMapUrl
     ) {
         this.displayPrefix = displayPrefix;
         this.mainWorld = mainWorld;
@@ -51,6 +63,12 @@ public final class PluginConfig {
         this.branchWorldDirectory = branchWorldDirectory;
         this.branchWorldPrefix = branchWorldPrefix;
         this.databaseFile = databaseFile;
+        this.webEnabled = webEnabled;
+        this.webHost = webHost;
+        this.webPort = webPort;
+        this.webStaticDirectory = webStaticDirectory;
+        this.webRecentLimit = webRecentLimit;
+        this.webBlueMapUrl = webBlueMapUrl;
     }
 
     public static PluginConfig load(JavaPlugin plugin) {
@@ -69,13 +87,47 @@ public final class PluginConfig {
                 config.getString("backup.directory", "backups"),
                 config.getString("branch-world.directory", "branch"),
                 config.getString("branch-world.prefix", "wg_"),
-                config.getString("database.file", "worldgit.db")
+                config.getString("database.file", "worldgit.db"),
+                config.getBoolean("web.enabled", true),
+                normalizeHost(config.getString("web.host", "0.0.0.0")),
+                normalizePort(config.getInt("web.port", 80)),
+                normalizeDirectory(config.getString("web.static-directory", "web"), "web"),
+                Math.max(1, config.getInt("web.recent-limit", 20)),
+                normalizeOptional(config.getString("web.bluemap-url", ""))
         );
     }
 
     private static String normalizeDisplayPrefix(String value) {
         if (value == null || value.isBlank()) {
             return "WorldGit";
+        }
+        return value.trim();
+    }
+
+    private static String normalizeHost(String value) {
+        if (value == null || value.isBlank()) {
+            return "0.0.0.0";
+        }
+        return value.trim();
+    }
+
+    private static int normalizePort(int value) {
+        if (value < 1 || value > 65535) {
+            return 80;
+        }
+        return value;
+    }
+
+    private static String normalizeDirectory(String value, String fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        return value.trim();
+    }
+
+    private static String normalizeOptional(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
         }
         return value.trim();
     }
@@ -142,5 +194,33 @@ public final class PluginConfig {
 
     public Path databasePath(JavaPlugin plugin) {
         return plugin.getDataFolder().toPath().resolve(databaseFile);
+    }
+
+    public boolean webEnabled() {
+        return webEnabled;
+    }
+
+    public String webHost() {
+        return webHost;
+    }
+
+    public int webPort() {
+        return webPort;
+    }
+
+    public String webStaticDirectory() {
+        return webStaticDirectory;
+    }
+
+    public Path webStaticDirectoryPath(JavaPlugin plugin) {
+        return plugin.getDataFolder().toPath().resolve(webStaticDirectory);
+    }
+
+    public int webRecentLimit() {
+        return webRecentLimit;
+    }
+
+    public String webBlueMapUrl() {
+        return webBlueMapUrl;
     }
 }

@@ -1,0 +1,648 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>控制面板</title>
+  <style>
+    :root {
+      --bg:        #f6f8fa;
+      --surface:   #ffffff;
+      --surface2:  #f0f2f5;
+      --border:    #d0d7de;
+      --border2:   #afb8c1;
+      --text:      #1f2328;
+      --muted:     #57606a;
+      --accent:    #1a7f37;
+      --accent2:   #116329;
+      --blue:      #0969da;
+      --yellow:    #9a6700;
+      --red:       #cf222e;
+      --teal:      #0d7b6e;
+      --mono:      "JetBrains Mono", "Fira Code", "Courier New", monospace;
+      --sans:      "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+      --radius:    6px;
+      --radius-lg: 10px;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 14px;
+      line-height: 1.5;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ────────────────────────────────────── */
+    .header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 20px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .header-logo {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--accent);
+      white-space: nowrap;
+    }
+    .header-spacer { flex: 1; }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 9px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 500;
+      border: 1px solid;
+    }
+    .status-badge.ok      { color: #1a7f37; border-color: #2da44e55; background: #dafbe155; }
+    .status-badge.err     { color: #cf222e; border-color: #cf222e55; background: #ffebe955; }
+    .status-badge.loading { color: var(--muted); border-color: var(--border); background: var(--surface2); }
+
+    .status-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+    .status-dot.pulse { animation: pulse 1.6s ease infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    .refresh-time { color: var(--muted); font-size: 12px; white-space: nowrap; }
+
+    .header-controls { display: flex; align-items: center; gap: 8px; }
+    .label-sm { color: var(--muted); font-size: 12px; white-space: nowrap; }
+    .input-sm {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-size: 12px;
+      padding: 4px 8px;
+      width: 64px;
+      outline: none;
+    }
+    .input-sm:focus { border-color: var(--blue); box-shadow: 0 0 0 3px #0969da22; }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 5px 12px; border-radius: var(--radius);
+      border: 1px solid var(--border); background: var(--surface);
+      color: var(--text); font-size: 12px; cursor: pointer; white-space: nowrap;
+      transition: background .12s, border-color .12s;
+    }
+    .btn:hover { background: var(--surface2); border-color: var(--border2); }
+    .btn.primary { background: #1a7f37; border-color: #116329; color: #fff; }
+    .btn.primary:hover { background: #116329; }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+    /* ── Tabs ──────────────────────────────────────── */
+    .tabs {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      padding: 0 20px;
+    }
+    .tab-btn {
+      display: flex; align-items: center; gap: 6px;
+      padding: 9px 14px; font-size: 13px; font-weight: 500;
+      color: var(--muted); cursor: pointer;
+      border: none; background: none;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+      transition: color .12s;
+    }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active { color: var(--text); border-bottom-color: var(--accent); }
+
+    .tab-pane { display: none; }
+    .tab-pane.active { display: block; }
+
+    /* ── Activity pane ─────────────────────────────── */
+    .activity-pane {
+      max-width: 1400px; margin: 0 auto;
+      padding: 24px 20px 48px; width: 100%;
+    }
+    .columns {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+    @media (max-width: 900px)  { .columns { grid-template-columns: 1fr; } }
+    @media (min-width: 600px) and (max-width: 900px) {
+      .columns { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    .column-header {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 0 10px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 12px;
+    }
+    .column-title {
+      font-size: 12px; font-weight: 600;
+      color: var(--muted); text-transform: uppercase; letter-spacing: .05em;
+    }
+    .column-count {
+      margin-left: auto; font-size: 11px;
+      color: var(--muted); background: var(--surface2);
+      border: 1px solid var(--border); border-radius: 10px; padding: 1px 7px;
+    }
+    .col-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .col-dot.created   { background: var(--blue); }
+    .col-dot.submitted { background: var(--yellow); }
+    .col-dot.merged    { background: var(--accent); }
+
+    /* ── Cards ─────────────────────────────────────── */
+    .card-list { display: flex; flex-direction: column; gap: 8px; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 12px 14px;
+      transition: border-color .12s, box-shadow .12s;
+    }
+    .card:hover { border-color: var(--border2); box-shadow: 0 1px 4px rgba(0,0,0,.06); }
+
+    .card-id {
+      font-family: var(--mono); font-size: 12px;
+      color: var(--blue); font-weight: 600;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .card-row {
+      display: flex; align-items: center; gap: 5px;
+      margin-top: 6px; font-size: 12px; color: var(--muted); flex-wrap: wrap;
+    }
+    .card-row svg { flex-shrink: 0; opacity: .6; }
+    .card-val { color: var(--text); }
+    .card-time {
+      font-size: 11px; color: var(--muted);
+      margin-top: 8px; padding-top: 8px;
+      border-top: 1px solid var(--border);
+    }
+    .card-merge-msg {
+      margin-top: 8px; padding: 6px 8px;
+      background: #dafbe1; border-radius: var(--radius);
+      font-size: 12px; color: #1a7f37;
+      border-left: 2px solid #2da44e;
+      word-break: break-word;
+    }
+    .card-merge-msg span { color: var(--text); }
+
+    .badge {
+      display: inline-block; padding: 1px 7px; border-radius: 10px;
+      font-size: 11px; font-weight: 600; line-height: 1.6; border: 1px solid;
+    }
+    .badge-ACTIVE    { color: #0969da; border-color: #0969da55; background: #ddf4ff; }
+    .badge-SUBMITTED { color: #9a6700; border-color: #e3b34155; background: #fff8c5; }
+    .badge-APPROVED  { color: #1a7f37; border-color: #2da44e55; background: #dafbe1; }
+    .badge-REJECTED  { color: #cf222e; border-color: #cf222e55; background: #ffebe9; }
+    .badge-MERGED    { color: #0d7b6e; border-color: #0d7b6e55; background: #effcf8; }
+    .badge-ABANDONED { color: #57606a; border-color: #afb8c1;   background: #f6f8fa; }
+
+    /* ── State boxes ────────────────────────────────── */
+    .state-box {
+      padding: 32px 16px; text-align: center;
+      color: var(--muted); font-size: 13px;
+      display: flex; flex-direction: column; align-items: center; gap: 8px;
+    }
+    .state-box svg { opacity: .35; }
+    .spinner {
+      width: 18px; height: 18px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Map pane ───────────────────────────────────── */
+    .map-pane {
+      display: flex; flex-direction: column;
+      height: calc(100vh - 105px); min-height: 400px;
+    }
+    .map-toolbar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 8px 16px;
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      flex-shrink: 0;
+    }
+    .input-map {
+      background: var(--surface);
+      border: 1px solid var(--border); border-radius: var(--radius);
+      color: var(--text); font-size: 12px; padding: 4px 8px; outline: none;
+    }
+    .input-map:focus { border-color: var(--blue); box-shadow: 0 0 0 3px #0969da22; }
+    .input-num  { width: 72px; }
+    .input-wide { width: 110px; }
+    .map-divider { width: 1px; height: 18px; background: var(--border); flex-shrink: 0; }
+    .map-views { display: flex; gap: 4px; }
+    .btn-view { padding: 4px 9px; font-size: 11px; }
+
+    .map-canvas-wrap {
+      flex: 1; position: relative; overflow: hidden;
+      background: #dde4ed;
+    }
+    .map-frame { width: 100%; height: 100%; display: block; border: 0; background: #dde4ed; }
+    .map-spacer { flex: 1; }
+    .map-url-label {
+      color: var(--muted);
+      font-size: 12px;
+      max-width: 520px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .map-overlay {
+      position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(240,242,245,.88); z-index: 10;
+    }
+    .map-overlay.hidden { display: none; }
+    .map-overlay-inner {
+      text-align: center; color: var(--muted);
+      display: flex; flex-direction: column; align-items: center; gap: 10px;
+    }
+    .map-overlay-inner p { font-size: 13px; }
+
+    .map-hint {
+      position: absolute; bottom: 12px; left: 12px;
+      color: var(--muted); font-size: 11px;
+      pointer-events: none; line-height: 1.8;
+      background: rgba(255,255,255,.75);
+      padding: 4px 8px; border-radius: var(--radius);
+      border: 1px solid var(--border);
+    }
+    .map-info {
+      position: absolute; bottom: 12px; right: 12px;
+      color: var(--muted); font-size: 11px; text-align: right;
+      pointer-events: none;
+      background: rgba(255,255,255,.75);
+      padding: 4px 8px; border-radius: var(--radius);
+      border: 1px solid var(--border);
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ───────────────────────────── -->
+<header class="header">
+  <div class="header-logo">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+      <polyline points="16 18 22 12 16 6"/>
+      <polyline points="8 6 2 12 8 18"/>
+    </svg>
+    <span id="logo-text">WorldGit</span>
+  </div>
+
+  <div id="health-badge" class="status-badge loading">
+    <span class="status-dot pulse"></span>
+    <span id="health-text">连接中…</span>
+  </div>
+
+  <span class="refresh-time" id="last-refresh">从未刷新</span>
+  <div class="header-spacer"></div>
+
+  <div class="header-controls">
+    <span class="label-sm">条数</span>
+    <input class="input-sm" type="number" id="limit-input" value="20" min="1" max="100">
+    <button class="btn primary" id="refresh-btn" onclick="refreshAll()">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <polyline points="23 4 23 10 17 10"/>
+        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+      </svg>
+      刷新
+    </button>
+  </div>
+</header>
+
+<!-- ── Tabs ─────────────────────────────── -->
+<nav class="tabs">
+  <button class="tab-btn active" id="tab-activity" onclick="switchTab('activity', this)">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+      <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+    </svg>
+    最近活动
+  </button>
+  <button class="tab-btn" id="tab-map" onclick="switchTab('map', this)" hidden>
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/>
+      <line x1="9" y1="3" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="21"/>
+    </svg>
+    BlueMap 地图
+  </button>
+</nav>
+
+<!-- ── Activity ──────────────────────────── -->
+<div id="pane-activity" class="tab-pane active">
+  <div class="activity-pane">
+    <div class="columns">
+      <div>
+        <div class="column-header">
+          <span class="col-dot created"></span>
+          <span class="column-title">最近创建</span>
+          <span class="column-count" id="count-created">—</span>
+        </div>
+        <div class="card-list" id="list-created">
+          <div class="state-box"><div class="spinner"></div><p>加载中…</p></div>
+        </div>
+      </div>
+      <div>
+        <div class="column-header">
+          <span class="col-dot submitted"></span>
+          <span class="column-title">最近提交</span>
+          <span class="column-count" id="count-submitted">—</span>
+        </div>
+        <div class="card-list" id="list-submitted">
+          <div class="state-box"><div class="spinner"></div><p>加载中…</p></div>
+        </div>
+      </div>
+      <div>
+        <div class="column-header">
+          <span class="col-dot merged"></span>
+          <span class="column-title">最近合并</span>
+          <span class="column-count" id="count-merged">—</span>
+        </div>
+        <div class="card-list" id="list-merged">
+          <div class="state-box"><div class="spinner"></div><p>加载中…</p></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="pane-map" class="tab-pane">
+  <div class="map-pane">
+    <div class="map-toolbar">
+      <span class="label-sm">来源</span>
+      <span class="card-val">BlueMap</span>
+      <div class="map-divider"></div>
+      <span class="map-url-label" id="map-url-label">未配置 BlueMap 地址</span>
+      <div class="map-spacer"></div>
+      <a class="btn" id="map-open-link" href="#" target="_blank" rel="noopener noreferrer" hidden>新标签打开</a>
+    </div>
+
+    <div class="map-canvas-wrap">
+      <iframe class="map-frame" id="map-frame" title="BlueMap 地图" loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe>
+      <div class="map-overlay" id="map-overlay">
+        <div class="map-overlay-inner" id="map-overlay-inner">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#1a7f37" stroke-width="1.5">
+            <polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/>
+            <line x1="9" y1="3" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="21"/>
+          </svg>
+          <p>BlueMap 未配置</p>
+          <p style="font-size:11px">请在 config.yml 填写 web.bluemap-url</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Scripts ────────────────────────────── -->
+<script>
+/* ── Utilities ─────────────────────────────── */
+function esc(s) {
+  return String(s ?? '')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function fmtTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  const pad = n => String(n).padStart(2,'0');
+  const diff = Date.now() - d;
+  if (diff < 60000)    return '刚刚';
+  if (diff < 3600000)  return `${Math.floor(diff/60000)} 分钟前`;
+  if (diff < 86400000) return `${Math.floor(diff/3600000)} 小时前`;
+  if (diff < 86400000*7) return `${Math.floor(diff/86400000)} 天前`;
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} `
+       + `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+const STATUS_LABELS = {
+  ACTIVE:'活跃', SUBMITTED:'已提交', APPROVED:'已审批',
+  REJECTED:'已拒绝', MERGED:'已合并', ABANDONED:'已废弃'
+};
+let blueMapUrl = '';
+let blueMapLoadedUrl = '';
+let blueMapFallbackTimer = null;
+
+function normalizeBlueMapUrl(value) {
+  return String(value ?? '').trim();
+}
+
+function setMapOverlay(title, hint) {
+  const overlay = document.getElementById('map-overlay');
+  const inner = document.getElementById('map-overlay-inner');
+  overlay.classList.remove('hidden');
+  inner.innerHTML = `
+    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#1a7f37" stroke-width="1.5">
+      <polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/>
+      <line x1="9" y1="3" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="21"/>
+    </svg>
+    <p>${esc(title)}</p>
+    <p style="font-size:11px">${esc(hint)}</p>`;
+}
+
+function hideMapOverlay() {
+  document.getElementById('map-overlay').classList.add('hidden');
+}
+
+function applyBlueMapConfig() {
+  const mapTab = document.getElementById('tab-map');
+  const mapPane = document.getElementById('pane-map');
+  const activityTab = document.getElementById('tab-activity');
+  const openLink = document.getElementById('map-open-link');
+  const frame = document.getElementById('map-frame');
+  const urlLabel = document.getElementById('map-url-label');
+  const hasBlueMap = blueMapUrl.length > 0;
+
+  mapTab.hidden = !hasBlueMap;
+  openLink.hidden = !hasBlueMap;
+  urlLabel.textContent = hasBlueMap ? blueMapUrl : '未配置 BlueMap 地址';
+
+  if (!hasBlueMap) {
+    if (mapPane.classList.contains('active')) {
+      switchTab('activity', activityTab);
+    }
+    frame.removeAttribute('src');
+    blueMapLoadedUrl = '';
+    clearTimeout(blueMapFallbackTimer);
+    setMapOverlay('BlueMap 未配置', '请在 config.yml 填写 web.bluemap-url');
+    return;
+  }
+
+  openLink.href = blueMapUrl;
+  if (blueMapLoadedUrl && blueMapLoadedUrl !== blueMapUrl) {
+    frame.removeAttribute('src');
+    blueMapLoadedUrl = '';
+    setMapOverlay('BlueMap 地址已更新', '重新进入标签页后会加载新的 BlueMap 地址');
+  }
+  if (mapPane.classList.contains('active')) {
+    ensureBlueMapLoaded();
+  }
+}
+
+function ensureBlueMapLoaded() {
+  if (!blueMapUrl || blueMapLoadedUrl === blueMapUrl) {
+    return;
+  }
+
+  const frame = document.getElementById('map-frame');
+  blueMapLoadedUrl = blueMapUrl;
+  clearTimeout(blueMapFallbackTimer);
+  setMapOverlay('正在加载 BlueMap…', '如果长时间空白，请确认地址可直接访问，或改用新标签打开');
+  frame.src = blueMapUrl;
+  blueMapFallbackTimer = window.setTimeout(() => {
+    setMapOverlay('BlueMap 尚未在页面内完成加载', '如果内嵌失败，请用上方按钮在新标签打开');
+  }, 8000);
+}
+
+/* ── Tab switching ─────────────────────────── */
+function switchTab(name, btn) {
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('pane-' + name).classList.add('active');
+  btn.classList.add('active');
+  if (name === 'map') {
+    ensureBlueMapLoaded();
+  }
+}
+
+/* ── Health ────────────────────────────────── */
+async function checkHealth() {
+  const badge = document.getElementById('health-badge');
+  const text  = document.getElementById('health-text');
+  badge.className = 'status-badge loading';
+  badge.querySelector('.status-dot').classList.add('pulse');
+  text.textContent = '连接中…';
+  try {
+    const r = await fetch('/api/health', { headers: { Accept: 'application/json' } });
+    const d = await r.json();
+    if (d.status === 'ok') {
+      badge.className = 'status-badge ok';
+      badge.querySelector('.status-dot').classList.remove('pulse');
+      text.textContent = `运行中 v${esc(d.version)}`;
+      // Update page title and logo with the configured prefix
+      const prefix = d.prefix || 'WorldGit';
+      document.getElementById('logo-text').textContent = prefix;
+      document.title = prefix + ' 控制面板';
+      blueMapUrl = normalizeBlueMapUrl(d.blueMapUrl);
+      applyBlueMapConfig();
+    } else {
+      throw new Error(d.status);
+    }
+  } catch (e) {
+    badge.className = 'status-badge err';
+    badge.querySelector('.status-dot').classList.remove('pulse');
+    text.textContent = '无法连接';
+    blueMapUrl = '';
+    applyBlueMapConfig();
+  }
+}
+
+/* ── Activity ──────────────────────────────── */
+function renderCard(item, showMerge) {
+  const badge = `<span class="badge badge-${esc(item.status)}">${esc(STATUS_LABELS[item.status] || item.status)}</span>`;
+  const merge = showMerge && item.mergeMessage
+    ? `<div class="card-merge-msg">合并说明：<span>${esc(item.mergeMessage)}</span></div>`
+    : '';
+  return `<article class="card">
+    <div class="card-id" title="${esc(item.branchId)}">${esc(item.branchId)}</div>
+    <div class="card-row">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+      </svg>
+      <span class="card-val">${esc(item.ownerName)}</span>
+      &ensp;
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/>
+      </svg>
+      <span class="card-val">${esc(item.worldName)}</span>
+      &ensp;${badge}
+    </div>
+    <div class="card-time" title="${esc(item.eventAt)}">${fmtTime(item.eventAt)}</div>
+    ${merge}
+  </article>`;
+}
+
+function renderList(listId, countId, items, showMerge) {
+  const list  = document.getElementById(listId);
+  const count = document.getElementById(countId);
+  if (!Array.isArray(items) || items.length === 0) {
+    count.textContent = '0';
+    list.innerHTML = `<div class="state-box">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <circle cx="12" cy="12" r="10"/><line x1="8" y1="12" x2="16" y2="12"/>
+      </svg>
+      <p>暂无记录</p></div>`;
+    return;
+  }
+  count.textContent = items.length;
+  list.innerHTML = items.map(i => renderCard(i, showMerge)).join('');
+}
+
+function setLoading(listId) {
+  document.getElementById(listId).innerHTML =
+    '<div class="state-box"><div class="spinner"></div><p>加载中…</p></div>';
+}
+function setError(listId) {
+  document.getElementById(listId).innerHTML =
+    `<div class="state-box">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#cf222e" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/>
+        <line x1="12" y1="8" x2="12" y2="12"/>
+        <line x1="12" y1="16" x2="12.01" y2="16"/>
+      </svg>
+      <p>接口暂不可用</p></div>`;
+}
+
+async function loadActivity() {
+  const limit = parseInt(document.getElementById('limit-input').value, 10) || 20;
+  ['list-created','list-submitted','list-merged'].forEach(setLoading);
+  try {
+    const r = await fetch(`/api/activity/recent?limit=${limit}`, { headers: { Accept: 'application/json' } });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    renderList('list-created',   'count-created',   d.created,   false);
+    renderList('list-submitted', 'count-submitted', d.submitted, false);
+    renderList('list-merged',    'count-merged',    d.merged,    true);
+    document.getElementById('last-refresh').textContent =
+      '刷新于 ' + fmtTime(new Date().toISOString());
+  } catch (e) {
+    ['list-created','list-submitted','list-merged'].forEach(setError);
+    document.getElementById('last-refresh').textContent = '刷新失败';
+  }
+}
+
+async function refreshAll() {
+  const btn = document.getElementById('refresh-btn');
+  btn.disabled = true;
+  await Promise.all([checkHealth(), loadActivity()]);
+  btn.disabled = false;
+}
+
+/* ── Boot ──────────────────────────────────── */
+document.getElementById('map-frame').addEventListener('load', () => {
+  clearTimeout(blueMapFallbackTimer);
+  hideMapOverlay();
+});
+applyBlueMapConfig();
+refreshAll();
+</script>
+</body>
+</html>
