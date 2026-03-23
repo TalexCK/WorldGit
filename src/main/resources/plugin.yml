@@ -8,6 +8,7 @@ authors:
 softdepend:
   - Multiverse-Core
   - LuckPerms
+  - BlueMap
 commands:
   wg:
     description: 协作建造分支管理命令
@@ -44,6 +45,8 @@ permissions:
   worldgit.admin.list:
     default: op
   worldgit.admin.backup:
+    default: op
+  worldgit.admin.sync:
     default: op
   worldgit.admin.locks:
     default: op

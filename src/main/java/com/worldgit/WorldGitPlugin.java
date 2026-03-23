@@ -7,9 +7,11 @@ import com.worldgit.command.ReviewCommands;
 import com.worldgit.command.WorldGitCommand;
 import com.worldgit.config.PluginConfig;
 import com.worldgit.database.BranchRepository;
+import com.worldgit.database.BranchSyncRepository;
 import com.worldgit.database.DatabaseManager;
 import com.worldgit.database.LockRepository;
 import com.worldgit.database.QueueRepository;
+import com.worldgit.database.RevisionRepository;
 import com.worldgit.generator.VoidChunkGenerator;
 import com.worldgit.listener.BranchWorldListener;
 import com.worldgit.listener.BranchEditProtectionListener;
@@ -19,13 +21,18 @@ import com.worldgit.listener.PlayerConnectionListener;
 import com.worldgit.listener.PlayerStateListener;
 import com.worldgit.manager.BackupManager;
 import com.worldgit.manager.BranchManager;
+import com.worldgit.manager.BlueMapEditRegionManager;
+import com.worldgit.manager.ConflictToolManager;
+import com.worldgit.manager.GitHubSyncManager;
 import com.worldgit.manager.LockManager;
 import com.worldgit.manager.MergeManager;
 import com.worldgit.manager.PlayerSelectionManager;
 import com.worldgit.manager.PlayerStateManager;
 import com.worldgit.manager.ProtectionManager;
 import com.worldgit.manager.QueueManager;
+import com.worldgit.manager.RebaseManager;
 import com.worldgit.manager.RegionCopyManager;
+import com.worldgit.manager.SnapshotManager;
 import com.worldgit.manager.WorldManager;
 import com.worldgit.util.ManagerAdminService;
 import com.worldgit.util.ManagerBranchService;
@@ -57,16 +64,23 @@ public final class WorldGitPlugin extends JavaPlugin {
     private PluginConfig pluginConfig;
     private DatabaseManager databaseManager;
     private BranchRepository branchRepository;
+    private BranchSyncRepository branchSyncRepository;
     private LockRepository lockRepository;
     private QueueRepository queueRepository;
+    private RevisionRepository revisionRepository;
     private ProtectionManager protectionManager;
     private WorldManager worldManager;
     private RegionCopyManager regionCopyManager;
     private QueueManager queueManager;
     private LockManager lockManager;
+    private SnapshotManager snapshotManager;
+    private RebaseManager rebaseManager;
     private MergeManager mergeManager;
     private BackupManager backupManager;
+    private GitHubSyncManager gitHubSyncManager;
     private BranchManager branchManager;
+    private BlueMapEditRegionManager blueMapEditRegionManager;
+    private ConflictToolManager conflictToolManager;
     private PlayerSelectionManager selectionManager;
     private PlayerStateManager playerStateManager;
     private ReviewMenuManager reviewMenuManager;
@@ -91,8 +105,17 @@ public final class WorldGitPlugin extends JavaPlugin {
         if (backupManager != null) {
             backupManager.stop();
         }
+        if (gitHubSyncManager != null) {
+            gitHubSyncManager.stop();
+        }
         if (playerMenuManager != null) {
             playerMenuManager.stop();
+        }
+        if (blueMapEditRegionManager != null) {
+            blueMapEditRegionManager.stop();
+        }
+        if (conflictToolManager != null) {
+            conflictToolManager.stopAllSessions();
         }
         if (playerStateManager != null) {
             playerStateManager.stop();
@@ -119,8 +142,17 @@ public final class WorldGitPlugin extends JavaPlugin {
         if (backupManager != null) {
             backupManager.stop();
         }
+        if (gitHubSyncManager != null) {
+            gitHubSyncManager.stop();
+        }
         if (playerMenuManager != null) {
             playerMenuManager.stop();
+        }
+        if (blueMapEditRegionManager != null) {
+            blueMapEditRegionManager.stop();
+        }
+        if (conflictToolManager != null) {
+            conflictToolManager.stopAllSessions();
         }
         if (playerStateManager != null) {
             playerStateManager.stop();
@@ -141,26 +173,39 @@ public final class WorldGitPlugin extends JavaPlugin {
 
         databaseManager = new DatabaseManager(pluginConfig.databasePath(this));
         branchRepository = new BranchRepository(databaseManager);
+        branchSyncRepository = new BranchSyncRepository(databaseManager);
         lockRepository = new LockRepository(databaseManager);
         queueRepository = new QueueRepository(databaseManager);
+        revisionRepository = new RevisionRepository(databaseManager);
 
         protectionManager = new ProtectionManager(pluginConfig);
         worldManager = new WorldManager(this, pluginConfig);
         regionCopyManager = new RegionCopyManager(pluginConfig);
+        snapshotManager = new SnapshotManager(this);
         selectionManager = new PlayerSelectionManager();
         queueManager = new QueueManager(this, pluginConfig, queueRepository);
         lockManager = new LockManager(lockRepository);
+        rebaseManager = new RebaseManager(
+                branchRepository,
+                branchSyncRepository,
+                revisionRepository,
+                worldManager,
+                regionCopyManager,
+                snapshotManager
+        );
         mergeManager = new MergeManager(
                 this,
                 pluginConfig,
                 databaseManager,
                 branchRepository,
+                revisionRepository,
                 lockManager,
                 queueManager,
                 worldManager,
                 regionCopyManager
         );
         backupManager = new BackupManager(this, pluginConfig);
+        gitHubSyncManager = new GitHubSyncManager(this, pluginConfig);
         branchManager = new BranchManager(
                 this,
                 pluginConfig,
@@ -168,13 +213,16 @@ public final class WorldGitPlugin extends JavaPlugin {
                 lockManager,
                 queueManager,
                 mergeManager,
+                rebaseManager,
                 worldManager,
                 regionCopyManager,
                 selectionManager,
                 protectionManager
         );
         reviewMenuManager = new ReviewMenuManager(this, branchManager);
-        playerMenuManager = new PlayerMenuManager(this, branchManager, reviewMenuManager);
+        blueMapEditRegionManager = new BlueMapEditRegionManager(this, branchManager);
+        conflictToolManager = new ConflictToolManager(this, branchManager);
+        playerMenuManager = new PlayerMenuManager(this, branchManager, conflictToolManager, reviewMenuManager);
         reviewMenuManager.setPlayerMenuService(playerMenuManager);
         playerStateManager = new PlayerStateManager(this, pluginConfig, worldManager, branchManager, selectionManager);
 
@@ -182,8 +230,14 @@ public final class WorldGitPlugin extends JavaPlugin {
         registerListeners();
         applyMainWorldSettings();
         backupManager.start();
+        gitHubSyncManager.start();
+        lockManager.unlockAll();
+        queueManager.clearAll();
+        branchManager.bootstrapLegacyBranches();
         playerMenuManager.start();
         playerStateManager.start();
+        blueMapEditRegionManager.start();
+        rebaseManager.recoverIncompleteRebases();
         mergeManager.recoverIncompleteMerges();
         webServer = new PluginWebServer(this, pluginConfig, branchRepository);
         webServer.start();
@@ -194,7 +248,7 @@ public final class WorldGitPlugin extends JavaPlugin {
         WorldGitCommand executor = new WorldGitCommand(
                 new BranchCommands(new ManagerBranchService(branchManager)),
                 new ReviewCommands(new ManagerReviewService(branchManager, reviewMenuManager)),
-                new AdminCommands(new ManagerAdminService(this, branchManager, lockManager, backupManager)),
+                new AdminCommands(new ManagerAdminService(this, branchManager, lockManager, backupManager, gitHubSyncManager)),
                 new InviteCommands(new ManagerInviteService(branchManager)),
                 playerMenuManager
         );
@@ -268,6 +322,10 @@ public final class WorldGitPlugin extends JavaPlugin {
         );
         getServer().getPluginManager().registerEvents(
                 reviewMenuManager,
+                this
+        );
+        getServer().getPluginManager().registerEvents(
+                conflictToolManager,
                 this
         );
         getServer().getPluginManager().registerEvents(

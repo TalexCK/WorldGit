@@ -155,6 +155,16 @@ public final class LockRepository {
         });
     }
 
+    public int deleteAll() throws SQLException {
+        return databaseManager.withConnection(connection -> {
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "DELETE FROM region_locks"
+            )) {
+                return statement.executeUpdate();
+            }
+        });
+    }
+
     public void insert(RegionLock lock) {
         try {
             if (!acquire(lock)) {
@@ -186,6 +196,14 @@ public final class LockRepository {
             return findConflicts(mainWorld, minX, minY, minZ, maxX, maxY, maxZ);
         } catch (SQLException exception) {
             throw new IllegalStateException("查询区域冲突失败", exception);
+        }
+    }
+
+    public void deleteAllUnchecked() {
+        try {
+            deleteAll();
+        } catch (SQLException exception) {
+            throw new IllegalStateException("清理全部区域锁失败", exception);
         }
     }
 

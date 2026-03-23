@@ -4,6 +4,7 @@ import com.worldgit.database.LockRepository;
 import com.worldgit.model.RegionLock;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 public final class LockManager {
 
@@ -40,5 +41,17 @@ public final class LockManager {
 
     public List<RegionLock> findAll() {
         return lockRepository.findAllUnchecked();
+    }
+
+    public void unlockAll() {
+        lockRepository.deleteAllUnchecked();
+    }
+
+    public Optional<RegionLock> findByBranchId(String branchId) {
+        try {
+            return lockRepository.findByBranchId(branchId);
+        } catch (Exception exception) {
+            throw new IllegalStateException("查询分支锁失败", exception);
+        }
     }
 }

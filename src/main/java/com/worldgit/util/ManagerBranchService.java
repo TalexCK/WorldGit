@@ -4,6 +4,7 @@ import com.worldgit.manager.BranchManager;
 import com.worldgit.manager.PlayerSelectionManager;
 import com.worldgit.manager.RegionCopyManager;
 import com.worldgit.model.Branch;
+import com.worldgit.model.BranchSyncInfo;
 import java.util.List;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
@@ -57,10 +58,14 @@ public final class ManagerBranchService implements BranchService {
         if (!branchManager.canAccessBranch(player, branch) && !branch.ownerUuid().equals(player.getUniqueId())) {
             throw new IllegalStateException("你无权查看该分支");
         }
+        BranchSyncInfo syncInfo = branchManager.getSyncInfo(branch);
         MessageUtil.sendInfo(sender, "分支 " + branch.id() + " 状态: " + branch.status());
         sender.sendMessage(MessageUtil.info("世界: " + branch.worldName() + " | 主世界: " + branch.mainWorld()));
         sender.sendMessage(MessageUtil.info("区域: (" + branch.minX() + ", " + branch.minY() + ", " + branch.minZ()
                 + ") -> (" + branch.maxX() + ", " + branch.maxY() + ", " + branch.maxZ() + ")"));
+        sender.sendMessage(MessageUtil.info("同步: " + syncInfo.syncState()
+                + " | base/head: " + syncInfo.baseRevision() + "/" + branchManager.currentHeadRevision(branch.mainWorld())
+                + " | 冲突组: " + syncInfo.unresolvedGroupCount()));
         return true;
     }
 
@@ -82,10 +87,7 @@ public final class ManagerBranchService implements BranchService {
 
     @Override
     public boolean queue(Player player) {
-        requirePermission(player, "worldgit.branch.queue");
-        branchManager.queueSelection(player);
-        MessageUtil.sendSuccess(player, "已加入该区域的排队列表");
-        return true;
+        throw new IllegalStateException("1.1.0 已移除编辑期排队，请直接创建分支。");
     }
 
     @Override

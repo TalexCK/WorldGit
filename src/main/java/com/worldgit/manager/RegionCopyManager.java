@@ -30,6 +30,16 @@ public final class RegionCopyManager {
         copyRegion(source, target, bounds.minX(), bounds.minY(), bounds.minZ(), bounds.maxX(), bounds.maxY(), bounds.maxZ());
     }
 
+    public int copyRegionOutsideExclusion(
+            World source,
+            World target,
+            SelectionBounds bounds,
+            SelectionBounds excludedBounds
+    ) {
+        return copyRegion(source, target, bounds.minX(), bounds.minY(), bounds.minZ(),
+                bounds.maxX(), bounds.maxY(), bounds.maxZ(), excludedBounds);
+    }
+
     public SelectionBounds expandForCopy(World world, SelectionBounds editableBounds) {
         return new SelectionBounds(
                 editableBounds.minX() - COPY_PADDING,
@@ -42,18 +52,41 @@ public final class RegionCopyManager {
     }
 
     public void copyRegion(World source, World target, int minX, int minY, int minZ, int maxX, int maxY, int maxZ) {
+        copyRegion(source, target, minX, minY, minZ, maxX, maxY, maxZ, null);
+    }
+
+    private int copyRegion(
+            World source,
+            World target,
+            int minX,
+            int minY,
+            int minZ,
+            int maxX,
+            int maxY,
+            int maxZ,
+            SelectionBounds excludedBounds
+    ) {
         preloadChunks(source, minX, minZ, maxX, maxZ);
         preloadChunks(target, minX, minZ, maxX, maxZ);
+        int copiedBlocks = 0;
         for (int x = minX; x <= maxX; x++) {
             for (int z = minZ; z <= maxZ; z++) {
                 for (int y = minY; y <= maxY; y++) {
+                    if (excludedBounds != null
+                            && x >= excludedBounds.minX() && x <= excludedBounds.maxX()
+                            && y >= excludedBounds.minY() && y <= excludedBounds.maxY()
+                            && z >= excludedBounds.minZ() && z <= excludedBounds.maxZ()) {
+                        continue;
+                    }
                     Block sourceBlock = source.getBlockAt(x, y, z);
                     Block targetBlock = target.getBlockAt(x, y, z);
                     BlockData data = sourceBlock.getBlockData().clone();
                     targetBlock.setBlockData(data, false);
+                    copiedBlocks++;
                 }
             }
         }
+        return copiedBlocks;
     }
 
     private void preloadChunks(World world, int minX, int minZ, int maxX, int maxZ) {

@@ -12,6 +12,18 @@ backup:
   max-backups: 10
   directory: "backups"
 
+github-sync:
+  enabled: false
+  interval-minutes: 30
+  # 仓库格式固定为 owner/repo。
+  repository: ""
+  # SSH 私钥文件路径。支持绝对路径，或相对插件数据目录的路径。
+  private-key-path: ""
+  branch: "main"
+  directory: "github-sync"
+  author-name: "WorldGit"
+  author-email: "worldgit@local"
+
 branch-world:
   directory: "branch"
   prefix: "wg_"

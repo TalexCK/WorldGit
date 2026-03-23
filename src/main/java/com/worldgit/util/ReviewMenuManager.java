@@ -3,6 +3,8 @@ package com.worldgit.util;
 import com.worldgit.WorldGitPlugin;
 import com.worldgit.manager.BranchManager;
 import com.worldgit.model.Branch;
+import com.worldgit.model.BranchSyncInfo;
+import com.worldgit.model.BranchSyncState;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -43,6 +45,8 @@ public final class ReviewMenuManager implements Listener {
     private static final String ACTION_REJECT = "reject";
     private static final String ACTION_BACK = "back";
     private static final String ACTION_PLAYER_MENU = "player-menu";
+    private static final String ACTION_TAB_PENDING = "tab-pending";
+    private static final String ACTION_TAB_REREVIEW = "tab-rereview";
 
     private final WorldGitPlugin plugin;
     private final BranchManager branchManager;
@@ -63,18 +67,40 @@ public final class ReviewMenuManager implements Listener {
     }
 
     public void openPendingReviewMenu(Player player) {
-        List<Branch> branches = branchManager.listPendingReviews();
-        ReviewListHolder holder = new ReviewListHolder();
-        Inventory inventory = Bukkit.createInventory(holder, 54, "审核列表");
+        openReviewListMenu(player, false);
+    }
+
+    private void openReviewListMenu(Player player, boolean reReviewMode) {
+        List<Branch> branches = (reReviewMode ? branchManager.listReReviewBranches() : branchManager.listPendingReviews()).stream()
+                .filter(branch -> !reReviewMode || branchManager.getSyncInfo(branch).lastReviewedRevision() != null)
+                .filter(branch -> reReviewMode || branchManager.getSyncInfo(branch).lastReviewedRevision() == null)
+                .toList();
+        ReviewListHolder holder = new ReviewListHolder(reReviewMode);
+        Inventory inventory = Bukkit.createInventory(holder, 54, reReviewMode ? "复审列表" : "审核列表");
         holder.setInventory(inventory);
+
+        inventory.setItem(0, createItem(
+                reReviewMode ? Material.GRAY_DYE : Material.LIME_CONCRETE,
+                "待审核",
+                null,
+                ACTION_TAB_PENDING,
+                List.of("左键：查看首次审核列表")
+        ));
+        inventory.setItem(1, createItem(
+                reReviewMode ? Material.ORANGE_CONCRETE : Material.GRAY_DYE,
+                "需复审",
+                null,
+                ACTION_TAB_REREVIEW,
+                List.of("左键：查看主线更新后的复审列表")
+        ));
 
         if (branches.isEmpty()) {
             inventory.setItem(22, createItem(
                     Material.GRAY_STAINED_GLASS_PANE,
-                    "暂无待审核分支",
+                    reReviewMode ? "暂无待复审分支" : "暂无待审核分支",
                     null,
                     null,
-                    List.of("当前没有待审核分支")
+                    List.of(reReviewMode ? "当前没有待复审分支" : "当前没有待审核分支")
             ));
         } else {
             int slot = 0;
@@ -82,7 +108,10 @@ public final class ReviewMenuManager implements Listener {
                 if (slot >= 45) {
                     break;
                 }
-                inventory.setItem(slot++, createBranchItem(branch));
+                if (slot == 0 || slot == 1) {
+                    slot = 9;
+                }
+                inventory.setItem(slot++, createBranchItem(branch, reReviewMode));
             }
         }
         inventory.setItem(49, createItem(
@@ -99,8 +128,20 @@ public final class ReviewMenuManager implements Listener {
         ReviewActionHolder holder = new ReviewActionHolder(branch.id());
         Inventory inventory = Bukkit.createInventory(holder, 27, ACTION_TITLE_PREFIX + shortId(branch.id()));
         holder.setInventory(inventory);
+        BranchSyncInfo syncInfo = branchManager.getSyncInfo(branch);
         inventory.setItem(10, createActionItem(Material.ENDER_PEARL, "传送到分支", branch.id(), ACTION_TELEPORT,
                 List.of("左键：传送到该分支世界")));
+        inventory.setItem(12, createItem(
+                Material.PAPER,
+                "同步摘要",
+                branch.id(),
+                null,
+                List.of(
+                        "sync：" + syncStateLabel(syncInfo.syncState()),
+                        "base/head：" + syncInfo.baseRevision() + " / " + branchManager.currentHeadRevision(branch.mainWorld()),
+                        "上次审核基线：" + (syncInfo.lastReviewedRevision() == null ? "暂无" : syncInfo.lastReviewedRevision())
+                )
+        ));
         inventory.setItem(13, createActionItem(Material.LIME_CONCRETE, "批准分支", branch.id(), ACTION_APPROVE,
                 List.of("左键：批准该分支", "通过后玩家可执行确认合并")));
         inventory.setItem(16, createActionItem(Material.RED_CONCRETE, "驳回分支", branch.id(), ACTION_REJECT,
@@ -130,6 +171,14 @@ public final class ReviewMenuManager implements Listener {
         String action = meta.getPersistentDataContainer().get(actionKey, PersistentDataType.STRING);
         if (ACTION_PLAYER_MENU.equals(action) && event.isLeftClick()) {
             playerMenuService.openMainMenu(player);
+            return;
+        }
+        if (ACTION_TAB_PENDING.equals(action) && event.isLeftClick()) {
+            openReviewListMenu(player, false);
+            return;
+        }
+        if (ACTION_TAB_REREVIEW.equals(action) && event.isLeftClick()) {
+            openReviewListMenu(player, true);
             return;
         }
         String branchId = meta.getPersistentDataContainer().get(branchKey, PersistentDataType.STRING);
@@ -168,7 +217,7 @@ public final class ReviewMenuManager implements Listener {
             return;
         }
         if (ACTION_BACK.equals(action) && event.isLeftClick()) {
-            openPendingReviewMenu(player);
+            openReviewListMenu(player, false);
             return;
         }
         MessageUtil.sendWarning(player, "该操作方式无效，请按物品提示点击。");
@@ -277,17 +326,20 @@ public final class ReviewMenuManager implements Listener {
                 && left.getBlockZ() == right.getBlockZ();
     }
 
-    private ItemStack createBranchItem(Branch branch) {
+    private ItemStack createBranchItem(Branch branch, boolean reReviewMode) {
+        BranchSyncInfo syncInfo = branchManager.getSyncInfo(branch);
         return createItem(
-                Material.CHEST,
-                "待审核分支 " + shortId(branch.id()),
+                reReviewMode ? Material.ORANGE_CONCRETE : Material.CHEST,
+                (reReviewMode ? "待复审分支 " : "待审核分支 ") + shortId(branch.id()),
                 branch.id(),
                 ACTION_BRANCH,
                 List.of(
                         "所有者：" + branch.ownerName(),
                         "世界：" + branch.worldName(),
+                        "sync：" + syncStateLabel(syncInfo.syncState()),
+                        "base/head：" + syncInfo.baseRevision() + " / " + branchManager.currentHeadRevision(branch.mainWorld()),
                         "左键：打开审核面板",
-                        "若你不在该分支内，会先自动传送"
+                        reReviewMode ? "该分支曾通过审核，因主线变化需要复审" : "若你不在该分支内，会先自动传送"
                 )
         );
     }
@@ -320,12 +372,27 @@ public final class ReviewMenuManager implements Listener {
         return branchId.length() <= 8 ? branchId : branchId.substring(0, 8);
     }
 
+    private String syncStateLabel(BranchSyncState state) {
+        return switch (state) {
+            case CLEAN -> "已同步";
+            case NEEDS_REBASE -> "需要 Rebase";
+            case REBASING -> "Rebasing 中";
+            case HAS_CONFLICTS -> "存在冲突";
+        };
+    }
+
     private record PendingRejectInput(String branchId, Location location, BlockData previousBlockData) {
     }
 
     private static final class ReviewListHolder implements InventoryHolder {
 
+        private final boolean reReviewMode;
+
         private Inventory inventory;
+
+        private ReviewListHolder(boolean reReviewMode) {
+            this.reReviewMode = reReviewMode;
+        }
 
         @Override
         public Inventory getInventory() {
@@ -334,6 +401,11 @@ public final class ReviewMenuManager implements Listener {
 
         private void setInventory(Inventory inventory) {
             this.inventory = inventory;
+        }
+
+        @SuppressWarnings("unused")
+        private boolean reReviewMode() {
+            return reReviewMode;
         }
     }
 

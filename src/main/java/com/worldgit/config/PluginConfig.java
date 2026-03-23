@@ -17,6 +17,14 @@ public final class PluginConfig {
     private final int backupIntervalMinutes;
     private final int backupMaxBackups;
     private final String backupDirectory;
+    private final boolean githubSyncEnabled;
+    private final int githubSyncIntervalMinutes;
+    private final String githubSyncRepository;
+    private final String githubSyncPrivateKeyPath;
+    private final String githubSyncBranch;
+    private final String githubSyncDirectory;
+    private final String githubSyncAuthorName;
+    private final String githubSyncAuthorEmail;
     private final String branchWorldDirectory;
     private final String branchWorldPrefix;
     private final String databaseFile;
@@ -39,6 +47,14 @@ public final class PluginConfig {
             int backupIntervalMinutes,
             int backupMaxBackups,
             String backupDirectory,
+            boolean githubSyncEnabled,
+            int githubSyncIntervalMinutes,
+            String githubSyncRepository,
+            String githubSyncPrivateKeyPath,
+            String githubSyncBranch,
+            String githubSyncDirectory,
+            String githubSyncAuthorName,
+            String githubSyncAuthorEmail,
             String branchWorldDirectory,
             String branchWorldPrefix,
             String databaseFile,
@@ -60,6 +76,14 @@ public final class PluginConfig {
         this.backupIntervalMinutes = backupIntervalMinutes;
         this.backupMaxBackups = backupMaxBackups;
         this.backupDirectory = backupDirectory;
+        this.githubSyncEnabled = githubSyncEnabled;
+        this.githubSyncIntervalMinutes = githubSyncIntervalMinutes;
+        this.githubSyncRepository = githubSyncRepository;
+        this.githubSyncPrivateKeyPath = githubSyncPrivateKeyPath;
+        this.githubSyncBranch = githubSyncBranch;
+        this.githubSyncDirectory = githubSyncDirectory;
+        this.githubSyncAuthorName = githubSyncAuthorName;
+        this.githubSyncAuthorEmail = githubSyncAuthorEmail;
         this.branchWorldDirectory = branchWorldDirectory;
         this.branchWorldPrefix = branchWorldPrefix;
         this.databaseFile = databaseFile;
@@ -85,6 +109,14 @@ public final class PluginConfig {
                 Math.max(1, config.getInt("backup.interval-minutes", 30)),
                 Math.max(1, config.getInt("backup.max-backups", 10)),
                 config.getString("backup.directory", "backups"),
+                config.getBoolean("github-sync.enabled", false),
+                Math.max(1, config.getInt("github-sync.interval-minutes", 30)),
+                normalizeOptional(config.getString("github-sync.repository", "")),
+                normalizeOptional(config.getString("github-sync.private-key-path", "")),
+                normalizeDirectory(config.getString("github-sync.branch", "main"), "main"),
+                normalizeDirectory(config.getString("github-sync.directory", "github-sync"), "github-sync"),
+                normalizeDirectory(config.getString("github-sync.author-name", "WorldGit"), "WorldGit"),
+                normalizeDirectory(config.getString("github-sync.author-email", "worldgit@local"), "worldgit@local"),
                 config.getString("branch-world.directory", "branch"),
                 config.getString("branch-world.prefix", "wg_"),
                 config.getString("database.file", "worldgit.db"),
@@ -178,6 +210,55 @@ public final class PluginConfig {
 
     public Path backupDirectoryPath(JavaPlugin plugin) {
         return plugin.getDataFolder().toPath().resolve(backupDirectory);
+    }
+
+    public boolean githubSyncEnabled() {
+        return githubSyncEnabled;
+    }
+
+    public int githubSyncIntervalMinutes() {
+        return githubSyncIntervalMinutes;
+    }
+
+    public String githubSyncRepository() {
+        return githubSyncRepository;
+    }
+
+    public String githubSyncPrivateKeyPath() {
+        return githubSyncPrivateKeyPath;
+    }
+
+    public Path githubSyncPrivateKeyPath(JavaPlugin plugin) {
+        Path configuredPath = Path.of(githubSyncPrivateKeyPath);
+        if (configuredPath.isAbsolute()) {
+            return configuredPath;
+        }
+        return plugin.getDataFolder().toPath().resolve(configuredPath);
+    }
+
+    public String githubSyncBranch() {
+        return githubSyncBranch;
+    }
+
+    public String githubSyncDirectory() {
+        return githubSyncDirectory;
+    }
+
+    public Path githubSyncDirectoryPath(JavaPlugin plugin) {
+        Path dataFolder = plugin.getDataFolder().toPath().toAbsolutePath().normalize();
+        Path resolved = dataFolder.resolve(githubSyncDirectory).normalize();
+        if (!resolved.startsWith(dataFolder)) {
+            throw new IllegalStateException("github-sync.directory 必须位于插件数据目录内");
+        }
+        return resolved;
+    }
+
+    public String githubSyncAuthorName() {
+        return githubSyncAuthorName;
+    }
+
+    public String githubSyncAuthorEmail() {
+        return githubSyncAuthorEmail;
     }
 
     public String branchWorldPrefix() {
