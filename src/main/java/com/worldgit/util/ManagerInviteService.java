@@ -29,6 +29,14 @@ public final class ManagerInviteService implements InviteService {
     }
 
     @Override
+    public boolean accept(CommandSender sender, String branchId) {
+        Player player = requirePlayer(sender);
+        Branch branch = branchManager.acceptInvite(player, branchId);
+        MessageUtil.sendSuccess(sender, "已接受分支邀请: " + branch.id());
+        return true;
+    }
+
+    @Override
     public boolean uninvite(CommandSender sender, String target, String branchId) {
         Player inviter = requirePlayer(sender);
         requirePermission(inviter, "worldgit.branch.invite");
@@ -59,6 +67,17 @@ public final class ManagerInviteService implements InviteService {
         String normalized = prefix == null ? "" : prefix.toLowerCase();
         return branchManager.listOwnBranches(player).stream()
                 .map(Branch::id)
+                .filter(id -> id.toLowerCase().startsWith(normalized))
+                .toList();
+    }
+
+    @Override
+    public List<String> suggestPendingBranchIds(CommandSender sender, String prefix) {
+        if (!(sender instanceof Player player)) {
+            return List.of();
+        }
+        String normalized = prefix == null ? "" : prefix.toLowerCase();
+        return branchManager.listPendingInviteBranchIds(player).stream()
                 .filter(id -> id.toLowerCase().startsWith(normalized))
                 .toList();
     }

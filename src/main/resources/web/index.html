@@ -164,6 +164,138 @@
     .col-dot.submitted { background: var(--yellow); }
     .col-dot.merged    { background: var(--accent); }
 
+    /* ── Leaderboard ───────────────────────── */
+    .leaderboard-panel {
+      margin-bottom: 18px;
+      padding: 18px;
+      background:
+        radial-gradient(circle at top right, rgba(26,127,55,.12), transparent 34%),
+        linear-gradient(135deg, #ffffff 0%, #f4fbf7 100%);
+      border: 1px solid #b7dfc3;
+      border-radius: 14px;
+      box-shadow: 0 8px 24px rgba(17,99,41,.06);
+    }
+    .leaderboard-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+    }
+    .leaderboard-kicker {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--accent2);
+      margin-bottom: 4px;
+    }
+    .leaderboard-title {
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--text);
+      letter-spacing: -.02em;
+    }
+    .leaderboard-desc {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      max-width: 720px;
+    }
+    .leaderboard-chip {
+      align-self: center;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid #b7dfc3;
+      background: rgba(255,255,255,.88);
+      color: var(--accent2);
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .leaderboard-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    @media (max-width: 900px) {
+      .leaderboard-list { grid-template-columns: 1fr; }
+    }
+    .leaderboard-card {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: rgba(255,255,255,.92);
+      border: 1px solid #d8efe0;
+      transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease;
+    }
+    .leaderboard-card:hover {
+      transform: translateY(-1px);
+      border-color: #9fd2af;
+      box-shadow: 0 10px 20px rgba(17,99,41,.08);
+    }
+    .leaderboard-rank {
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text);
+      background: #edf2f7;
+      border: 1px solid #d0d7de;
+    }
+    .leaderboard-rank.rank-1 {
+      background: linear-gradient(135deg, #fff6c6, #f5cc62);
+      border-color: #e3b341;
+    }
+    .leaderboard-rank.rank-2 {
+      background: linear-gradient(135deg, #eef2f8, #d1d9e3);
+      border-color: #afb8c1;
+    }
+    .leaderboard-rank.rank-3 {
+      background: linear-gradient(135deg, #f8e5d1, #e7b287);
+      border-color: #c17d46;
+    }
+    .leaderboard-player {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .leaderboard-meta {
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .leaderboard-score {
+      text-align: right;
+      font-family: var(--mono);
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--accent2);
+      line-height: 1.1;
+    }
+    .leaderboard-score span {
+      display: block;
+      margin-top: 3px;
+      font-size: 10px;
+      color: var(--muted);
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .leaderboard-subline {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
     /* ── Cards ─────────────────────────────────────── */
     .card-list { display: flex; flex-direction: column; gap: 8px; }
 
@@ -346,11 +478,30 @@
     </svg>
     BlueMap 地图
   </button>
+  <button class="tab-btn" id="tab-pointcloud" onclick="switchTab('pointcloud', this)" hidden>
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M12 2 21 7 12 12 3 7 12 2Z"/>
+      <path d="M21 7v10l-9 5-9-5V7"/>
+      <path d="M12 12v10"/>
+    </svg>
+    点云参考
+  </button>
 </nav>
 
 <!-- ── Activity ──────────────────────────── -->
 <div id="pane-activity" class="tab-pane active">
   <div class="activity-pane">
+    <section class="leaderboard-panel">
+      <div class="leaderboard-head">
+        <div>
+          <div class="leaderboard-kicker">玩家榜单</div>
+        </div>
+        <div class="leaderboard-chip" id="leaderboard-count">TOP —</div>
+      </div>
+      <div class="leaderboard-list" id="merge-leaderboard">
+        <div class="state-box"><div class="spinner"></div><p>加载中…</p></div>
+      </div>
+    </section>
     <div class="columns">
       <div>
         <div class="column-header">
@@ -413,6 +564,35 @@
   </div>
 </div>
 
+<div id="pane-pointcloud" class="tab-pane">
+  <div class="map-pane">
+    <div class="map-toolbar">
+      <span class="label-sm">来源</span>
+      <span class="card-val">Point Cloud</span>
+      <div class="map-divider"></div>
+      <span class="map-url-label" id="pointcloud-url-label">未配置点云参考地址</span>
+      <div class="map-spacer"></div>
+      <button class="btn" type="button" onclick="reloadPointCloud()">重新加载</button>
+      <a class="btn" id="pointcloud-open-link" href="#" target="_blank" rel="noopener noreferrer" hidden>新标签打开</a>
+    </div>
+
+    <div class="map-canvas-wrap">
+      <iframe class="map-frame" id="pointcloud-frame" title="点云三维参考" loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe>
+      <div class="map-overlay" id="pointcloud-overlay">
+        <div class="map-overlay-inner" id="pointcloud-overlay-inner">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#0d7b6e" stroke-width="1.5">
+            <path d="M12 2 21 7 12 12 3 7 12 2Z"/>
+            <path d="M21 7v10l-9 5-9-5V7"/>
+            <path d="M12 12v10"/>
+          </svg>
+          <p>点云参考未配置</p>
+          <p style="font-size:11px">请在 config.yml 填写 web.pointcloud-url</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ── Scripts ────────────────────────────── -->
 <script>
 /* ── Utilities ─────────────────────────────── */
@@ -433,6 +613,9 @@ function fmtTime(iso) {
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} `
        + `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+function fmtNumber(value) {
+  return new Intl.NumberFormat('zh-CN').format(Number(value || 0));
+}
 const STATUS_LABELS = {
   ACTIVE:'活跃', SUBMITTED:'已提交', APPROVED:'已审批',
   REJECTED:'已拒绝', MERGED:'已合并', ABANDONED:'已废弃'
@@ -440,6 +623,9 @@ const STATUS_LABELS = {
 let blueMapUrl = '';
 let blueMapLoadedUrl = '';
 let blueMapFallbackTimer = null;
+let pointCloudUrl = '';
+let pointCloudLoadedUrl = '';
+let pointCloudFallbackTimer = null;
 
 function normalizeBlueMapUrl(value) {
   return String(value ?? '').trim();
@@ -512,6 +698,82 @@ function ensureBlueMapLoaded() {
   }, 8000);
 }
 
+function setPointCloudOverlay(title, hint) {
+  const overlay = document.getElementById('pointcloud-overlay');
+  const inner = document.getElementById('pointcloud-overlay-inner');
+  overlay.classList.remove('hidden');
+  inner.innerHTML = `
+    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#0d7b6e" stroke-width="1.5">
+      <path d="M12 2 21 7 12 12 3 7 12 2Z"/>
+      <path d="M21 7v10l-9 5-9-5V7"/>
+      <path d="M12 12v10"/>
+    </svg>
+    <p>${esc(title)}</p>
+    <p style="font-size:11px">${esc(hint)}</p>`;
+}
+
+function hidePointCloudOverlay() {
+  document.getElementById('pointcloud-overlay').classList.add('hidden');
+}
+
+function applyPointCloudConfig() {
+  const pointCloudTab = document.getElementById('tab-pointcloud');
+  const pointCloudPane = document.getElementById('pane-pointcloud');
+  const activityTab = document.getElementById('tab-activity');
+  const frame = document.getElementById('pointcloud-frame');
+  const urlLabel = document.getElementById('pointcloud-url-label');
+  const openLink = document.getElementById('pointcloud-open-link');
+  const hasPointCloud = pointCloudUrl.length > 0;
+
+  pointCloudTab.hidden = !hasPointCloud;
+  urlLabel.textContent = hasPointCloud ? pointCloudUrl : '未配置点云参考地址';
+  openLink.hidden = !hasPointCloud;
+  openLink.href = hasPointCloud ? pointCloudUrl : '#';
+
+  if (!hasPointCloud) {
+    if (pointCloudPane.classList.contains('active')) {
+      switchTab('activity', activityTab);
+    }
+    frame.removeAttribute('src');
+    pointCloudLoadedUrl = '';
+    clearTimeout(pointCloudFallbackTimer);
+    setPointCloudOverlay('点云参考未配置', '请在 config.yml 填写 web.pointcloud-url');
+    return;
+  }
+
+  if (pointCloudLoadedUrl && pointCloudLoadedUrl !== pointCloudUrl) {
+    frame.removeAttribute('src');
+    pointCloudLoadedUrl = '';
+    setPointCloudOverlay('点云参考地址已更新', '重新进入标签页后会加载新的点云参考地址');
+  }
+  if (document.getElementById('pane-pointcloud').classList.contains('active')) {
+    ensurePointCloudLoaded();
+  }
+}
+
+function ensurePointCloudLoaded(forceReload = false) {
+  if (!pointCloudUrl) {
+    return;
+  }
+  if (!forceReload && pointCloudLoadedUrl === pointCloudUrl) {
+    return;
+  }
+
+  const frame = document.getElementById('pointcloud-frame');
+  pointCloudLoadedUrl = pointCloudUrl;
+  clearTimeout(pointCloudFallbackTimer);
+  setPointCloudOverlay('正在加载点云参考…', '如果长时间空白，请确认点云地址可直接访问，或改用新标签打开');
+  frame.src = pointCloudUrl;
+  pointCloudFallbackTimer = window.setTimeout(() => {
+    setPointCloudOverlay('点云参考尚未在页面内完成加载', '如果内嵌失败，请确认点云地址可直接访问，或改用新标签打开');
+  }, 8000);
+}
+
+function reloadPointCloud() {
+  pointCloudLoadedUrl = '';
+  ensurePointCloudLoaded(true);
+}
+
 /* ── Tab switching ─────────────────────────── */
 function switchTab(name, btn) {
   document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
@@ -520,6 +782,9 @@ function switchTab(name, btn) {
   btn.classList.add('active');
   if (name === 'map') {
     ensureBlueMapLoaded();
+  }
+  if (name === 'pointcloud') {
+    ensurePointCloudLoaded();
   }
 }
 
@@ -542,7 +807,9 @@ async function checkHealth() {
       document.getElementById('logo-text').textContent = prefix;
       document.title = prefix + ' 控制面板';
       blueMapUrl = normalizeBlueMapUrl(d.blueMapUrl);
+      pointCloudUrl = normalizeBlueMapUrl(d.pointCloudUrl);
       applyBlueMapConfig();
+      applyPointCloudConfig();
     } else {
       throw new Error(d.status);
     }
@@ -551,7 +818,9 @@ async function checkHealth() {
     badge.querySelector('.status-dot').classList.remove('pulse');
     text.textContent = '无法连接';
     blueMapUrl = '';
+    pointCloudUrl = '';
     applyBlueMapConfig();
+    applyPointCloudConfig();
   }
 }
 
@@ -611,6 +880,55 @@ function setError(listId) {
       <p>接口暂不可用</p></div>`;
 }
 
+function setLeaderboardLoading() {
+  document.getElementById('merge-leaderboard').innerHTML =
+    '<div class="state-box"><div class="spinner"></div><p>排行榜加载中…</p></div>';
+}
+
+function setLeaderboardError() {
+  document.getElementById('leaderboard-count').textContent = 'TOP —';
+  document.getElementById('merge-leaderboard').innerHTML =
+    `<div class="state-box">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#cf222e" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/>
+        <line x1="12" y1="8" x2="12" y2="12"/>
+        <line x1="12" y1="16" x2="12.01" y2="16"/>
+      </svg>
+      <p>排行榜接口暂不可用</p></div>`;
+}
+
+function renderLeaderboard(entries) {
+  const root = document.getElementById('merge-leaderboard');
+  const count = document.getElementById('leaderboard-count');
+  if (!Array.isArray(entries) || entries.length === 0) {
+    count.textContent = 'TOP 0';
+    root.innerHTML = `<div class="state-box">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path d="M4 19h16"/><path d="M6 16V9"/><path d="M12 16V5"/><path d="M18 16v-3"/>
+      </svg>
+      <p>暂无已统计的合并记录</p></div>`;
+    return;
+  }
+
+  count.textContent = `TOP ${entries.length}`;
+  root.innerHTML = entries.map((entry, index) => {
+    const rank = index + 1;
+    const rankClass = rank <= 3 ? ` rank-${rank}` : '';
+    return `<article class="leaderboard-card">
+      <div class="leaderboard-rank${rankClass}">${rank}</div>
+      <div>
+        <div class="leaderboard-player">${esc(entry.playerName)}</div>
+        <div class="leaderboard-meta">最近合并：${fmtTime(entry.lastMergedAt)}</div>
+        <div class="leaderboard-subline">累计合并 ${fmtNumber(entry.mergedBranchCount)} 次</div>
+      </div>
+      <div class="leaderboard-score">
+        ${fmtNumber(entry.totalChangedBlocks)}
+        <span>改块数</span>
+      </div>
+    </article>`;
+  }).join('');
+}
+
 async function loadActivity() {
   const limit = parseInt(document.getElementById('limit-input').value, 10) || 20;
   ['list-created','list-submitted','list-merged'].forEach(setLoading);
@@ -629,11 +947,27 @@ async function loadActivity() {
   }
 }
 
+async function loadLeaderboard() {
+  const limit = parseInt(document.getElementById('limit-input').value, 10) || 20;
+  setLeaderboardLoading();
+  try {
+    const r = await fetch(`/api/stats/merge-leaderboard?limit=${limit}`, { headers: { Accept: 'application/json' } });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    renderLeaderboard(d.leaderboard);
+  } catch (e) {
+    setLeaderboardError();
+  }
+}
+
 async function refreshAll() {
   const btn = document.getElementById('refresh-btn');
   btn.disabled = true;
-  await Promise.all([checkHealth(), loadActivity()]);
-  btn.disabled = false;
+  try {
+    await Promise.all([checkHealth(), loadActivity(), loadLeaderboard()]);
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 /* ── Boot ──────────────────────────────────── */
@@ -641,7 +975,12 @@ document.getElementById('map-frame').addEventListener('load', () => {
   clearTimeout(blueMapFallbackTimer);
   hideMapOverlay();
 });
+document.getElementById('pointcloud-frame').addEventListener('load', () => {
+  clearTimeout(pointCloudFallbackTimer);
+  hidePointCloudOverlay();
+});
 applyBlueMapConfig();
+applyPointCloudConfig();
 refreshAll();
 </script>
 </body>

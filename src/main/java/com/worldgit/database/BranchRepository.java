@@ -2,7 +2,9 @@ package com.worldgit.database;
 
 import com.worldgit.model.Branch;
 import com.worldgit.model.BranchInvite;
+import com.worldgit.model.BranchInviteRequest;
 import com.worldgit.model.BranchStatus;
+import com.worldgit.model.PlayerMergeLeaderboardEntry;
 
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -30,11 +32,11 @@ public final class BranchRepository {
             try (PreparedStatement statement = connection.prepareStatement(
                     """
                     INSERT INTO branches (
-                        id, owner_uuid, owner_name, world_name, main_world,
+                        id, owner_uuid, owner_name, branch_label, world_name, main_world,
                         min_x, min_y, min_z, max_x, max_y, max_z,
                         status, created_at, submitted_at, reviewed_by, reviewed_at,
                         review_note, merged_by, merge_message, merged_at, closed_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """
             )) {
                 bindBranch(statement, branch);
@@ -49,14 +51,15 @@ public final class BranchRepository {
             try (PreparedStatement statement = connection.prepareStatement(
                     """
                     INSERT INTO branches (
-                        id, owner_uuid, owner_name, world_name, main_world,
+                        id, owner_uuid, owner_name, branch_label, world_name, main_world,
                         min_x, min_y, min_z, max_x, max_y, max_z,
                         status, created_at, submitted_at, reviewed_by, reviewed_at,
                         review_note, merged_by, merge_message, merged_at, closed_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         owner_uuid = excluded.owner_uuid,
                         owner_name = excluded.owner_name,
+                        branch_label = excluded.branch_label,
                         world_name = excluded.world_name,
                         main_world = excluded.main_world,
                         min_x = excluded.min_x,
@@ -138,6 +141,86 @@ public final class BranchRepository {
 
     public List<Branch> listRecentMerged(int limit) throws SQLException {
         return listRecentByTimestamp("merged_at", true, Math.max(1, limit));
+    }
+
+    public void saveMergeBlockStats(String branchId, long changedBlockCount) throws SQLException {
+        databaseManager.withConnection(connection -> {
+            try (PreparedStatement statement = connection.prepareStatement(
+                    """
+                    INSERT INTO branch_merge_stats (branch_id, changed_block_count)
+                    VALUES (?, ?)
+                    ON CONFLICT(branch_id) DO UPDATE SET
+                        changed_block_count = excluded.changed_block_count
+                    """
+            )) {
+                statement.setString(1, branchId);
+                statement.setLong(2, Math.max(0L, changedBlockCount));
+                statement.executeUpdate();
+            }
+            return null;
+        });
+    }
+
+    public List<Branch> listMergedWithoutBlockStats() throws SQLException {
+        return databaseManager.withConnection(connection -> {
+            List<Branch> branches = new ArrayList<>();
+            try (PreparedStatement statement = connection.prepareStatement(
+                    """
+                    SELECT b.*
+                    FROM branches b
+                    LEFT JOIN branch_merge_stats stats ON stats.branch_id = b.id
+                    WHERE b.status = 'MERGED'
+                      AND b.merged_at IS NOT NULL
+                      AND stats.branch_id IS NULL
+                    ORDER BY b.merged_at ASC
+                    """
+            ); ResultSet resultSet = statement.executeQuery()) {
+                while (resultSet.next()) {
+                    branches.add(mapBranch(resultSet));
+                }
+            }
+            return branches;
+        });
+    }
+
+    public List<PlayerMergeLeaderboardEntry> listMergeLeaderboard(int limit) throws SQLException {
+        return databaseManager.withConnection(connection -> {
+            List<PlayerMergeLeaderboardEntry> entries = new ArrayList<>();
+            try (PreparedStatement statement = connection.prepareStatement(
+                    """
+                    SELECT
+                        b.owner_uuid,
+                        b.owner_name,
+                        COALESCE(SUM(stats.changed_block_count), 0) AS total_changed_blocks,
+                        COUNT(*) AS merged_branch_count,
+                        MAX(b.merged_at) AS last_merged_at
+                    FROM branch_merge_stats stats
+                    JOIN branches b ON b.id = stats.branch_id
+                    WHERE b.status = 'MERGED'
+                      AND b.merged_at IS NOT NULL
+                    GROUP BY b.owner_uuid, b.owner_name
+                    ORDER BY total_changed_blocks DESC,
+                             merged_branch_count DESC,
+                             last_merged_at DESC,
+                             b.owner_name COLLATE NOCASE ASC
+                    LIMIT ?
+                    """
+            )) {
+                statement.setInt(1, Math.max(1, limit));
+                try (ResultSet resultSet = statement.executeQuery()) {
+                    while (resultSet.next()) {
+                        entries.add(new PlayerMergeLeaderboardEntry(
+                                UUID.fromString(resultSet.getString("owner_uuid")),
+                                resultSet.getString("owner_name"),
+                                resultSet.getLong("total_changed_blocks"),
+                                resultSet.getInt("merged_branch_count"),
+                                getNullableInstant(resultSet, "last_merged_at")
+                        ));
+                    }
+                }
+            }
+            return entries;
+        });
     }
 
     public List<Branch> listActiveByOwner(UUID ownerUuid) throws SQLException {
@@ -273,6 +356,22 @@ public final class BranchRepository {
         });
     }
 
+    private boolean updateLabel(String branchId, String label) throws SQLException {
+        return databaseManager.withConnection(connection -> {
+            try (PreparedStatement statement = connection.prepareStatement(
+                    """
+                    UPDATE branches
+                    SET branch_label = ?
+                    WHERE id = ?
+                    """
+            )) {
+                statement.setString(1, label);
+                statement.setString(2, branchId);
+                return statement.executeUpdate() > 0;
+            }
+        });
+    }
+
     public boolean markMerged(String branchId, Instant mergedAt) throws SQLException {
         return databaseManager.withConnection(connection -> {
             try (PreparedStatement statement = connection.prepareStatement(
@@ -397,6 +496,30 @@ public final class BranchRepository {
         }
     }
 
+    public void saveMergeBlockStatsUnchecked(String branchId, long changedBlockCount) {
+        try {
+            saveMergeBlockStats(branchId, changedBlockCount);
+        } catch (SQLException exception) {
+            throw new IllegalStateException("保存合并改块统计失败", exception);
+        }
+    }
+
+    public List<Branch> listMergedWithoutBlockStatsUnchecked() {
+        try {
+            return listMergedWithoutBlockStats();
+        } catch (SQLException exception) {
+            throw new IllegalStateException("查询待回填合并统计失败", exception);
+        }
+    }
+
+    public List<PlayerMergeLeaderboardEntry> listMergeLeaderboardUnchecked(int limit) {
+        try {
+            return listMergeLeaderboard(limit);
+        } catch (SQLException exception) {
+            throw new IllegalStateException("查询合并排行榜失败", exception);
+        }
+    }
+
     public Optional<Branch> findLatestOwnedActiveBranch(UUID ownerUuid) {
         try {
             return listActiveByOwner(ownerUuid).stream().findFirst();
@@ -451,6 +574,16 @@ public final class BranchRepository {
         }
     }
 
+    public void saveLabel(String branchId, String label) {
+        try {
+            if (!updateLabel(branchId, label)) {
+                throw new IllegalStateException("分支不存在: " + branchId);
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("保存分支标签失败", exception);
+        }
+    }
+
     public void markMerged(String branchId, long mergedAtEpochSecond) {
         try {
             if (!markMerged(branchId, Instant.ofEpochSecond(mergedAtEpochSecond))) {
@@ -499,11 +632,32 @@ public final class BranchRepository {
         }
     }
 
+    public void addInviteRequest(String branchId, UUID playerUuid, UUID invitedBy, long invitedAtEpochSecond) {
+        try {
+            databaseManager.upsertBranchInviteRequest(new BranchInviteRequest(
+                    branchId,
+                    playerUuid,
+                    invitedBy,
+                    Instant.ofEpochSecond(invitedAtEpochSecond)
+            ));
+        } catch (SQLException exception) {
+            throw new IllegalStateException("保存待接受邀请失败", exception);
+        }
+    }
+
     public void removeInvite(String branchId, UUID playerUuid) {
         try {
             databaseManager.deleteBranchInvite(branchId, playerUuid);
         } catch (SQLException exception) {
             throw new IllegalStateException("删除邀请失败", exception);
+        }
+    }
+
+    public void removeInviteRequest(String branchId, UUID playerUuid) {
+        try {
+            databaseManager.deleteBranchInviteRequest(branchId, playerUuid);
+        } catch (SQLException exception) {
+            throw new IllegalStateException("删除待接受邀请失败", exception);
         }
     }
 
@@ -524,11 +678,51 @@ public final class BranchRepository {
         }
     }
 
+    public boolean hasInviteRequest(String branchId, UUID playerUuid) {
+        try {
+            return databaseManager.findBranchInviteRequest(branchId, playerUuid).isPresent();
+        } catch (SQLException exception) {
+            throw new IllegalStateException("查询待接受邀请失败", exception);
+        }
+    }
+
     public List<BranchInvite> listInvites(String branchId) {
         try {
             return databaseManager.listBranchInvites(branchId);
         } catch (SQLException exception) {
             throw new IllegalStateException("查询邀请列表失败", exception);
+        }
+    }
+
+    public List<BranchInviteRequest> listInviteRequests(String branchId) {
+        try {
+            return databaseManager.listBranchInviteRequests(branchId);
+        } catch (SQLException exception) {
+            throw new IllegalStateException("查询待接受邀请列表失败", exception);
+        }
+    }
+
+    public List<BranchInviteRequest> listInviteRequestsForPlayer(UUID playerUuid) {
+        try {
+            return databaseManager.listBranchInviteRequestsForPlayer(playerUuid);
+        } catch (SQLException exception) {
+            throw new IllegalStateException("查询玩家待接受邀请失败", exception);
+        }
+    }
+
+    public Optional<BranchInviteRequest> findInviteRequest(String branchId, UUID playerUuid) {
+        try {
+            return databaseManager.findBranchInviteRequest(branchId, playerUuid);
+        } catch (SQLException exception) {
+            throw new IllegalStateException("查询待接受邀请失败", exception);
+        }
+    }
+
+    public Optional<BranchInviteRequest> acceptInviteRequest(String branchId, UUID playerUuid) {
+        try {
+            return databaseManager.acceptBranchInviteRequest(branchId, playerUuid);
+        } catch (SQLException exception) {
+            throw new IllegalStateException("接受邀请失败", exception);
         }
     }
 
@@ -580,24 +774,25 @@ public final class BranchRepository {
         statement.setString(1, branch.id());
         statement.setString(2, branch.ownerUuid().toString());
         statement.setString(3, branch.ownerName());
-        statement.setString(4, branch.worldName());
-        statement.setString(5, branch.mainWorld());
-        setNullableInt(statement, 6, branch.minX());
-        setNullableInt(statement, 7, branch.minY());
-        setNullableInt(statement, 8, branch.minZ());
-        setNullableInt(statement, 9, branch.maxX());
-        setNullableInt(statement, 10, branch.maxY());
-        setNullableInt(statement, 11, branch.maxZ());
-        statement.setString(12, branch.status().dbValue());
-        statement.setLong(13, branch.createdAt().toEpochMilli());
-        setNullableInstant(statement, 14, branch.submittedAt());
-        setNullableUuid(statement, 15, branch.reviewedBy());
-        setNullableInstant(statement, 16, branch.reviewedAt());
-        statement.setString(17, branch.reviewNote());
-        setNullableUuid(statement, 18, branch.mergedBy());
-        statement.setString(19, branch.mergeMessage());
-        setNullableInstant(statement, 20, branch.mergedAt());
-        setNullableInstant(statement, 21, branch.closedAt());
+        statement.setString(4, branch.label());
+        statement.setString(5, branch.worldName());
+        statement.setString(6, branch.mainWorld());
+        setNullableInt(statement, 7, branch.minX());
+        setNullableInt(statement, 8, branch.minY());
+        setNullableInt(statement, 9, branch.minZ());
+        setNullableInt(statement, 10, branch.maxX());
+        setNullableInt(statement, 11, branch.maxY());
+        setNullableInt(statement, 12, branch.maxZ());
+        statement.setString(13, branch.status().dbValue());
+        statement.setLong(14, branch.createdAt().toEpochMilli());
+        setNullableInstant(statement, 15, branch.submittedAt());
+        setNullableUuid(statement, 16, branch.reviewedBy());
+        setNullableInstant(statement, 17, branch.reviewedAt());
+        statement.setString(18, branch.reviewNote());
+        setNullableUuid(statement, 19, branch.mergedBy());
+        statement.setString(20, branch.mergeMessage());
+        setNullableInstant(statement, 21, branch.mergedAt());
+        setNullableInstant(statement, 22, branch.closedAt());
     }
 
     private Branch mapBranch(ResultSet resultSet) throws SQLException {
@@ -605,6 +800,7 @@ public final class BranchRepository {
                 resultSet.getString("id"),
                 UUID.fromString(resultSet.getString("owner_uuid")),
                 resultSet.getString("owner_name"),
+                resultSet.getString("branch_label"),
                 resultSet.getString("world_name"),
                 resultSet.getString("main_world"),
                 getNullableInteger(resultSet, "min_x"),

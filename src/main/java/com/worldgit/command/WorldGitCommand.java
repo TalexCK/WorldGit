@@ -108,7 +108,7 @@ public final class WorldGitCommand implements CommandExecutor, TabCompleter {
     }
 
     private void sendHelp(CommandSender sender) {
-        MessageUtil.sendInfo(sender, "可用命令: /wg pos1, /wg pos2, /wg create, /wg submit [id], /wg confirm [id], /wg forceedit [id], /wg review list, /wg admin <sub>");
+        MessageUtil.sendInfo(sender, "可用命令: /wg pos1, /wg pos2, /wg create, /wg submit [id], /wg confirm [id], /wg forceedit [id], /wg invite <player> [id], /wg invite accept [id], /wg review list, /wg admin <sub>");
     }
 
     private List<String> rootSuggestions(String prefix) {

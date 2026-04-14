@@ -177,6 +177,20 @@ public final class RebaseManager {
             throw new IllegalStateException("当前分支还有未解决冲突，请先处理完再继续。");
         }
 
+        World mainWorld = Bukkit.getWorld(branch.mainWorld());
+        if (mainWorld == null) {
+            throw new IllegalStateException("主世界不存在: " + branch.mainWorld());
+        }
+        World branchWorld = worldManager.createBranchWorld(branch.worldName());
+        RegionCopyManager.SelectionBounds bounds = editableBounds(branch);
+        RegionCopyManager.SelectionBounds copiedBounds = regionCopyManager.expandForCopy(mainWorld, bounds);
+        int outsideSyncedBlocks = regionCopyManager.copyRegionOutsideExclusion(
+                mainWorld,
+                branchWorld,
+                copiedBounds,
+                bounds
+        );
+
         List<WorldCommit> incomingCommits = findIncomingCommits(branch);
         if (incomingCommits.isEmpty()) {
             BranchSyncInfo cleanInfo = new BranchSyncInfo(
@@ -193,15 +207,9 @@ public final class RebaseManager {
                     null
             );
             branchSyncRepository.saveUnchecked(cleanInfo);
-            return new RebaseResult(cleanInfo, List.of(), 0, 0, false);
+            return new RebaseResult(cleanInfo, List.of(), outsideSyncedBlocks, 0, 0, false);
         }
 
-        World mainWorld = Bukkit.getWorld(branch.mainWorld());
-        if (mainWorld == null) {
-            throw new IllegalStateException("主世界不存在: " + branch.mainWorld());
-        }
-        World branchWorld = worldManager.createBranchWorld(branch.worldName());
-        RegionCopyManager.SelectionBounds bounds = editableBounds(branch);
         long targetRevision = revisionRepository.getHeadRevisionUnchecked(branch.mainWorld());
 
         Path workingSnapshotPath = snapshotManager.createWorkingSnapshotPath(branch.id());
@@ -224,6 +232,7 @@ public final class RebaseManager {
             return new RebaseResult(
                     branchSyncRepository.findByBranchIdUnchecked(branch.id()),
                     incomingCommits,
+                    outsideSyncedBlocks,
                     computed.autoMergedCount(),
                     0,
                     false
@@ -247,7 +256,14 @@ public final class RebaseManager {
         branchSyncRepository.saveUnchecked(conflicted);
         snapshotManager.deleteQuietly(workingSnapshotPath);
         branchSyncRepository.deleteRebaseJournalUnchecked(branch.id());
-        return new RebaseResult(conflicted, incomingCommits, computed.autoMergedCount(), computed.conflictBlockCount(), true);
+        return new RebaseResult(
+                conflicted,
+                incomingCommits,
+                outsideSyncedBlocks,
+                computed.autoMergedCount(),
+                computed.conflictBlockCount(),
+                true
+        );
     }
 
     public List<ConflictGroup> listConflictGroups(String branchId) {
@@ -298,7 +314,7 @@ public final class RebaseManager {
                 .toList();
     }
 
-    public int fetchOutsideSelection(Branch branch) {
+    public int countPendingOutsideSelectionBlocks(Branch branch) {
         BranchSyncInfo syncInfo = ensureSyncInfo(branch);
         if (syncInfo.unresolvedGroupCount() > 0 || syncInfo.syncState() == BranchSyncState.HAS_CONFLICTS) {
             throw new IllegalStateException("当前分支还有未解决冲突，请先完成冲突处理后再 fetch。");
@@ -310,7 +326,7 @@ public final class RebaseManager {
         }
         World branchWorld = worldManager.createBranchWorld(branch.worldName());
         RegionCopyManager.SelectionBounds editableBounds = editableBounds(branch);
-        return regionCopyManager.copyRegionOutsideExclusion(
+        return regionCopyManager.countRegionDifferencesOutsideExclusion(
                 mainWorld,
                 branchWorld,
                 regionCopyManager.expandForCopy(mainWorld, editableBounds),
@@ -689,6 +705,7 @@ public final class RebaseManager {
     public record RebaseResult(
             BranchSyncInfo syncInfo,
             List<WorldCommit> incomingCommits,
+            int outsideSyncedBlocks,
             int autoMergedBlocks,
             int conflictBlocks,
             boolean hasConflicts

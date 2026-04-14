@@ -19,11 +19,15 @@ public interface AdminService {
 
     boolean locks(CommandSender sender);
 
+    boolean forceMerge(CommandSender sender, String branchId, boolean confirmed);
+
     boolean list(CommandSender sender, String playerName);
 
     boolean reload(CommandSender sender);
 
     List<String> suggestPlayerNames(CommandSender sender, String prefix);
+
+    List<String> suggestBranchIds(CommandSender sender, String prefix);
 
     static AdminService noop() {
         return new AdminService() {
@@ -53,6 +57,11 @@ public interface AdminService {
             }
 
             @Override
+            public boolean forceMerge(CommandSender sender, String branchId, boolean confirmed) {
+                return false;
+            }
+
+            @Override
             public boolean list(CommandSender sender, String playerName) {
                 return false;
             }
@@ -64,6 +73,11 @@ public interface AdminService {
 
             @Override
             public List<String> suggestPlayerNames(CommandSender sender, String prefix) {
+                return List.of();
+            }
+
+            @Override
+            public List<String> suggestBranchIds(CommandSender sender, String prefix) {
                 return List.of();
             }
         };

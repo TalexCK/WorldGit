@@ -1,6 +1,7 @@
 package com.worldgit.database;
 
 import com.worldgit.model.BranchInvite;
+import com.worldgit.model.BranchInviteRequest;
 import com.worldgit.model.MergeJournalEntry;
 
 import java.io.Closeable;
@@ -26,7 +27,7 @@ import java.util.stream.Collectors;
  */
 public final class DatabaseManager implements Closeable {
 
-    private static final int SCHEMA_VERSION = 3;
+    private static final int SCHEMA_VERSION = 6;
 
     private final Path databaseFile;
     private final String jdbcUrl;
@@ -207,21 +208,14 @@ public final class DatabaseManager implements Closeable {
 
     public void upsertBranchInvite(BranchInvite invite) throws SQLException {
         withConnection(connection -> {
-            try (PreparedStatement statement = connection.prepareStatement(
-                    """
-                    INSERT INTO branch_invites (branch_id, player_uuid, invited_by, invited_at)
-                    VALUES (?, ?, ?, ?)
-                    ON CONFLICT(branch_id, player_uuid) DO UPDATE SET
-                        invited_by = excluded.invited_by,
-                        invited_at = excluded.invited_at
-                    """
-            )) {
-                statement.setString(1, invite.branchId());
-                statement.setString(2, invite.playerUuid().toString());
-                statement.setString(3, invite.invitedBy() == null ? null : invite.invitedBy().toString());
-                statement.setLong(4, invite.invitedAt().toEpochMilli());
-                statement.executeUpdate();
-            }
+            upsertBranchInvite(connection, invite);
+            return null;
+        });
+    }
+
+    public void upsertBranchInviteRequest(BranchInviteRequest inviteRequest) throws SQLException {
+        withConnection(connection -> {
+            upsertBranchInviteRequest(connection, inviteRequest);
             return null;
         });
     }
@@ -253,6 +247,54 @@ public final class DatabaseManager implements Closeable {
         });
     }
 
+    public Optional<BranchInviteRequest> findBranchInviteRequest(String branchId, UUID playerUuid) throws SQLException {
+        return withConnection(connection -> findBranchInviteRequest(connection, branchId, playerUuid));
+    }
+
+    public List<BranchInviteRequest> listBranchInviteRequests(String branchId) throws SQLException {
+        return withConnection(connection -> {
+            List<BranchInviteRequest> inviteRequests = new ArrayList<>();
+            try (PreparedStatement statement = connection.prepareStatement(
+                    """
+                    SELECT branch_id, player_uuid, invited_by, invited_at
+                    FROM branch_invite_requests
+                    WHERE branch_id = ?
+                    ORDER BY invited_at ASC
+                    """
+            )) {
+                statement.setString(1, branchId);
+                try (ResultSet resultSet = statement.executeQuery()) {
+                    while (resultSet.next()) {
+                        inviteRequests.add(mapBranchInviteRequest(resultSet));
+                    }
+                }
+            }
+            return inviteRequests;
+        });
+    }
+
+    public List<BranchInviteRequest> listBranchInviteRequestsForPlayer(UUID playerUuid) throws SQLException {
+        return withConnection(connection -> {
+            List<BranchInviteRequest> inviteRequests = new ArrayList<>();
+            try (PreparedStatement statement = connection.prepareStatement(
+                    """
+                    SELECT branch_id, player_uuid, invited_by, invited_at
+                    FROM branch_invite_requests
+                    WHERE player_uuid = ?
+                    ORDER BY invited_at ASC
+                    """
+            )) {
+                statement.setString(1, playerUuid.toString());
+                try (ResultSet resultSet = statement.executeQuery()) {
+                    while (resultSet.next()) {
+                        inviteRequests.add(mapBranchInviteRequest(resultSet));
+                    }
+                }
+            }
+            return inviteRequests;
+        });
+    }
+
     public int deleteBranchInvite(String branchId, UUID playerUuid) throws SQLException {
         return withConnection(connection -> {
             try (PreparedStatement statement = connection.prepareStatement(
@@ -263,6 +305,39 @@ public final class DatabaseManager implements Closeable {
                 return statement.executeUpdate();
             }
         });
+    }
+
+    public int deleteBranchInviteRequest(String branchId, UUID playerUuid) throws SQLException {
+        return withConnection(connection -> deleteBranchInviteRequest(connection, branchId, playerUuid));
+    }
+
+    public Optional<BranchInviteRequest> acceptBranchInviteRequest(String branchId, UUID playerUuid) throws SQLException {
+        try (Connection connection = openConnection()) {
+            boolean previousAutoCommit = connection.getAutoCommit();
+            connection.setAutoCommit(false);
+            try {
+                Optional<BranchInviteRequest> inviteRequest = findBranchInviteRequest(connection, branchId, playerUuid);
+                if (inviteRequest.isEmpty()) {
+                    connection.commit();
+                    return Optional.empty();
+                }
+                BranchInviteRequest request = inviteRequest.get();
+                upsertBranchInvite(connection, new BranchInvite(
+                        request.branchId(),
+                        request.playerUuid(),
+                        request.invitedBy(),
+                        request.invitedAt()
+                ));
+                deleteBranchInviteRequest(connection, branchId, playerUuid);
+                connection.commit();
+                return Optional.of(request);
+            } catch (SQLException exception) {
+                connection.rollback();
+                throw exception;
+            } finally {
+                connection.setAutoCommit(previousAutoCommit);
+            }
+        }
     }
 
     public void initialize() throws SQLException {
@@ -542,7 +617,105 @@ public final class DatabaseManager implements Closeable {
                         "CREATE INDEX IF NOT EXISTS idx_conflict_groups_branch_id ON conflict_groups(branch_id)",
                         "CREATE INDEX IF NOT EXISTS idx_conflict_groups_status ON conflict_groups(status)",
                         "CREATE INDEX IF NOT EXISTS idx_rebase_journal_phase ON rebase_journal(phase)"
+                )),
+                new Migration(4, List.of(
+                        """
+                        CREATE TABLE IF NOT EXISTS branch_merge_stats (
+                            branch_id TEXT PRIMARY KEY REFERENCES branches(id) ON DELETE CASCADE,
+                            changed_block_count INTEGER NOT NULL DEFAULT 0
+                        )
+                        """,
+                        "CREATE INDEX IF NOT EXISTS idx_branch_merge_stats_changed_block_count ON branch_merge_stats(changed_block_count)"
+                )),
+                new Migration(5, List.of(
+                        """
+                        CREATE TABLE IF NOT EXISTS branch_invite_requests (
+                            branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+                            player_uuid TEXT NOT NULL,
+                            invited_by TEXT,
+                            invited_at INTEGER NOT NULL,
+                            PRIMARY KEY (branch_id, player_uuid)
+                        )
+                        """,
+                        "CREATE INDEX IF NOT EXISTS idx_branch_invite_requests_player_uuid ON branch_invite_requests(player_uuid)"
+                )),
+                new Migration(6, List.of(
+                        "ALTER TABLE branches ADD COLUMN branch_label TEXT"
                 ))
+        );
+    }
+
+    private void upsertBranchInvite(Connection connection, BranchInvite invite) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                """
+                INSERT INTO branch_invites (branch_id, player_uuid, invited_by, invited_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(branch_id, player_uuid) DO UPDATE SET
+                    invited_by = excluded.invited_by,
+                    invited_at = excluded.invited_at
+                """
+        )) {
+            statement.setString(1, invite.branchId());
+            statement.setString(2, invite.playerUuid().toString());
+            statement.setString(3, invite.invitedBy() == null ? null : invite.invitedBy().toString());
+            statement.setLong(4, invite.invitedAt().toEpochMilli());
+            statement.executeUpdate();
+        }
+    }
+
+    private void upsertBranchInviteRequest(Connection connection, BranchInviteRequest inviteRequest) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                """
+                INSERT INTO branch_invite_requests (branch_id, player_uuid, invited_by, invited_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(branch_id, player_uuid) DO UPDATE SET
+                    invited_by = excluded.invited_by,
+                    invited_at = excluded.invited_at
+                """
+        )) {
+            statement.setString(1, inviteRequest.branchId());
+            statement.setString(2, inviteRequest.playerUuid().toString());
+            statement.setString(3, inviteRequest.invitedBy() == null ? null : inviteRequest.invitedBy().toString());
+            statement.setLong(4, inviteRequest.invitedAt().toEpochMilli());
+            statement.executeUpdate();
+        }
+    }
+
+    private Optional<BranchInviteRequest> findBranchInviteRequest(Connection connection, String branchId, UUID playerUuid) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                """
+                SELECT branch_id, player_uuid, invited_by, invited_at
+                FROM branch_invite_requests
+                WHERE branch_id = ? AND player_uuid = ?
+                """
+        )) {
+            statement.setString(1, branchId);
+            statement.setString(2, playerUuid.toString());
+            try (ResultSet resultSet = statement.executeQuery()) {
+                if (!resultSet.next()) {
+                    return Optional.empty();
+                }
+                return Optional.of(mapBranchInviteRequest(resultSet));
+            }
+        }
+    }
+
+    private int deleteBranchInviteRequest(Connection connection, String branchId, UUID playerUuid) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "DELETE FROM branch_invite_requests WHERE branch_id = ? AND player_uuid = ?"
+        )) {
+            statement.setString(1, branchId);
+            statement.setString(2, playerUuid.toString());
+            return statement.executeUpdate();
+        }
+    }
+
+    private BranchInviteRequest mapBranchInviteRequest(ResultSet resultSet) throws SQLException {
+        return new BranchInviteRequest(
+                resultSet.getString("branch_id"),
+                UUID.fromString(resultSet.getString("player_uuid")),
+                parseUuid(resultSet.getString("invited_by")),
+                Instant.ofEpochMilli(resultSet.getLong("invited_at"))
         );
     }
 

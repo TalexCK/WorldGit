@@ -8,6 +8,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
 import org.bukkit.Bukkit;
+import org.bukkit.Difficulty;
+import org.bukkit.GameRules;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.WorldCreator;
@@ -36,6 +38,7 @@ public final class WorldManager {
     public World createBranchWorld(String worldName) {
         World existing = Bukkit.getWorld(worldName);
         if (existing != null) {
+            applyBranchWorldSettings(existing);
             return existing;
         }
 
@@ -52,8 +55,22 @@ public final class WorldManager {
         if (world == null) {
             throw new IllegalStateException("分支世界创建失败: " + worldName);
         }
-        world.setAutoSave(false);
+        applyBranchWorldSettings(world);
         return world;
+    }
+
+    private void applyBranchWorldSettings(World world) {
+        world.setAutoSave(false);
+        world.setDifficulty(Difficulty.PEACEFUL);
+        world.setGameRule(GameRules.SPAWN_MOBS, false);
+        world.setGameRule(GameRules.ADVANCE_TIME, false);
+        world.setGameRule(GameRules.ADVANCE_WEATHER, false);
+        world.setGameRule(GameRules.MOB_GRIEFING, false);
+        world.setSpawnFlags(false, false);
+        world.setTime(6000);
+        world.setStorm(false);
+        world.setThundering(false);
+        world.setWeatherDuration(Integer.MAX_VALUE);
     }
 
     public boolean unloadWorld(String worldName, Location fallbackLocation) {

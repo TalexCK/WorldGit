@@ -11,6 +11,7 @@ public record Branch(
         String id,
         UUID ownerUuid,
         String ownerName,
+        String label,
         String worldName,
         String mainWorld,
         Integer minX,
@@ -35,6 +36,7 @@ public record Branch(
         Objects.requireNonNull(id, "分支ID不能为空");
         Objects.requireNonNull(ownerUuid, "所有者UUID不能为空");
         Objects.requireNonNull(ownerName, "所有者名称不能为空");
+        label = label == null || label.isBlank() ? null : label.trim();
         Objects.requireNonNull(worldName, "分支世界名不能为空");
         Objects.requireNonNull(mainWorld, "主世界名不能为空");
         Objects.requireNonNull(status, "分支状态不能为空");
@@ -46,6 +48,7 @@ public record Branch(
                 id,
                 ownerUuid,
                 ownerName,
+                label,
                 worldName,
                 mainWorld,
                 minX,
@@ -72,6 +75,7 @@ public record Branch(
                 id,
                 ownerUuid,
                 ownerName,
+                label,
                 worldName,
                 mainWorld,
                 minX,
@@ -98,6 +102,7 @@ public record Branch(
                 id,
                 ownerUuid,
                 ownerName,
+                label,
                 worldName,
                 mainWorld,
                 minX,
@@ -124,6 +129,7 @@ public record Branch(
                 id,
                 ownerUuid,
                 ownerName,
+                label,
                 worldName,
                 mainWorld,
                 minX,
@@ -150,6 +156,7 @@ public record Branch(
                 id,
                 ownerUuid,
                 ownerName,
+                label,
                 worldName,
                 mainWorld,
                 minX,
@@ -168,6 +175,33 @@ public record Branch(
                 mergeMessage,
                 mergedAt,
                 newClosedAt
+        );
+    }
+
+    public Branch withLabel(String newLabel) {
+        return new Branch(
+                id,
+                ownerUuid,
+                ownerName,
+                newLabel,
+                worldName,
+                mainWorld,
+                minX,
+                minY,
+                minZ,
+                maxX,
+                maxY,
+                maxZ,
+                status,
+                createdAt,
+                submittedAt,
+                reviewedBy,
+                reviewedAt,
+                reviewNote,
+                mergedBy,
+                mergeMessage,
+                mergedAt,
+                closedAt
         );
     }
 

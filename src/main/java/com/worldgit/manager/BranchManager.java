@@ -4,13 +4,16 @@ import com.worldgit.WorldGitPlugin;
 import com.worldgit.config.PluginConfig;
 import com.worldgit.database.BranchRepository;
 import com.worldgit.model.Branch;
+import com.worldgit.model.BranchInviteRequest;
 import com.worldgit.model.BranchSyncInfo;
 import com.worldgit.model.BranchStatus;
 import com.worldgit.model.ConflictGroup;
 import com.worldgit.model.QueueEntry;
 import com.worldgit.model.RegionLock;
 import com.worldgit.model.WorldCommit;
+import com.worldgit.util.BranchDisplayUtil;
 import com.worldgit.util.MessageUtil;
+import org.bukkit.command.CommandSender;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -68,16 +71,20 @@ public final class BranchManager {
     }
 
     public Branch createBranch(Player player) {
+        return createBranch(player, null);
+    }
+
+    public Branch createBranch(Player player, String label) {
         CreateBranchPreview preview = previewCreateBranch(player);
         if (preview.hasOverlap()) {
             throw new IllegalStateException("当前选区与已有未合并编辑区重叠，请先通过玩家面板确认后再创建。");
         }
-        return createBranchConfirmed(player, preview.selection());
+        return createBranchConfirmed(player, preview.selection(), label);
     }
 
     public Branch createAssignedBranch(Player selector, Player owner) {
         RegionCopyManager.SelectionBounds selection = readSelection(selector);
-        return createBranchForOwner(selector, owner.getUniqueId(), owner.getName(), owner, selection);
+        return createBranchForOwner(selector, owner.getUniqueId(), owner.getName(), null, owner, selection);
     }
 
     public void queueSelection(Player player) {
@@ -102,6 +109,7 @@ public final class BranchManager {
             overlaps.add(new SelectionOverlap(
                     branch.id(),
                     branch.ownerName(),
+                    branch.label(),
                     branch.status(),
                     editableBounds(branch),
                     overlapBounds,
@@ -125,6 +133,10 @@ public final class BranchManager {
     }
 
     public Branch createBranchConfirmed(Player player, RegionCopyManager.SelectionBounds selection) {
+        return createBranchConfirmed(player, selection, null);
+    }
+
+    public Branch createBranchConfirmed(Player player, RegionCopyManager.SelectionBounds selection, String label) {
         ensureInMainWorld(player, "只能在主世界创建分支");
         if (selection == null) {
             throw new IllegalStateException("确认创建失败：缺少选区信息。");
@@ -136,7 +148,7 @@ public final class BranchManager {
         }
 
         regionCopyManager.validate(selection);
-        return createBranchForOwner(player, player.getUniqueId(), player.getName(), player, selection);
+        return createBranchForOwner(player, player.getUniqueId(), player.getName(), normalizeOptionalBranchLabel(label), player, selection);
     }
 
     public List<Branch> listEditingBranches() {
@@ -157,6 +169,7 @@ public final class BranchManager {
             Player selector,
             UUID ownerUuid,
             String ownerName,
+            String label,
             Player teleportTarget,
             RegionCopyManager.SelectionBounds selection
     ) {
@@ -170,6 +183,7 @@ public final class BranchManager {
         return createBranchFromBounds(
                 ownerUuid,
                 ownerName,
+                label,
                 selector.getWorld(),
                 selection,
                 teleportTarget,
@@ -266,6 +280,19 @@ public final class BranchManager {
 
     public List<Branch> listOwnBranches(Player player) {
         return branchRepository.findByOwnerUnchecked(player.getUniqueId());
+    }
+
+    public List<Branch> listEditableBranches(Player player) {
+        return branchRepository.findAll().stream()
+                .filter(branch -> canModifyBranch(player, branch))
+                .toList();
+    }
+
+    public List<String> listPendingInviteBranchIds(Player player) {
+        return branchRepository.listInviteRequestsForPlayer(player.getUniqueId()).stream()
+                .map(BranchInviteRequest::branchId)
+                .distinct()
+                .toList();
     }
 
     public List<Branch> listAllBranches() {
@@ -412,6 +439,27 @@ public final class BranchManager {
         mergeManager.confirmMerge(player, branch, mergeMessage);
     }
 
+    public Branch forceMergeBranch(CommandSender sender, String branchId, String mergeMessage) {
+        Branch branch = requireBranch(branchId);
+        if (branch.status() == BranchStatus.ABANDONED) {
+            throw new IllegalStateException("已废弃分支不能再强制合并。");
+        }
+        if (!branch.hasRegion()) {
+            throw new IllegalStateException("该分支没有有效区域，无法执行强制合并。");
+        }
+
+        UUID mergedBy = sender instanceof Player player ? player.getUniqueId() : null;
+        mergeManager.forceMerge(branch, mergedBy, mergeMessage);
+        refreshCachedBranch(branch.id());
+
+        Player owner = Bukkit.getPlayer(branch.ownerUuid());
+        boolean actorIsOwner = sender instanceof Player player && player.getUniqueId().equals(branch.ownerUuid());
+        if (owner != null && owner.isOnline() && !actorIsOwner) {
+            MessageUtil.sendWarning(owner, "管理员已将分支 " + branch.id() + " 强制合并到主世界。");
+        }
+        return requireBranch(branch.id());
+    }
+
     public Branch forceEditBranch(Player player, String branchId) {
         Branch branch = resolveForceEditableApprovedBranch(player, branchId);
         if (!branchRepository.reopenApprovedBranchUnchecked(branch.id())) {
@@ -438,6 +486,18 @@ public final class BranchManager {
 
     public void teleportToBranch(Player player, String branchId) {
         Branch branch = resolveAccessibleBranch(player, branchId);
+        teleportToBranchWorld(player, branch);
+    }
+
+    public void teleportToOverviewBranch(Player player, String branchId) {
+        Branch branch = requireBranch(branchId);
+        if (!isEditingBranch(branch)) {
+            throw new IllegalStateException("该分支已合并或关闭，无法从总览列表传送。");
+        }
+        teleportToBranchWorld(player, branch);
+    }
+
+    private void teleportToBranchWorld(Player player, Branch branch) {
         World world = worldManager.createBranchWorld(branch.worldName());
         rememberMainWorldLocation(player);
         player.teleportAsync(worldManager.createBranchSpawn(
@@ -470,20 +530,53 @@ public final class BranchManager {
 
     public void invitePlayer(Player inviter, Player invited, String branchId) {
         Branch branch = resolveOwnedBranch(inviter, branchId);
-        branchRepository.addInvite(branch.id(), invited.getUniqueId(), inviter.getUniqueId(), Instant.now().getEpochSecond());
-        invitedPlayersByBranch
-                .computeIfAbsent(branch.id(), ignored -> ConcurrentHashMap.newKeySet())
-                .add(invited.getUniqueId());
-        MessageUtil.sendSuccess(invited, "你被邀请进入分支: " + branch.id());
+        if (invited.getUniqueId().equals(branch.ownerUuid())) {
+            throw new IllegalStateException("分支所有者无需再次邀请自己。");
+        }
+        if (isInvited(branch, invited.getUniqueId())) {
+            throw new IllegalStateException("该玩家已经是这个分支的协作者。");
+        }
+        boolean alreadyPending = branchRepository.hasInviteRequest(branch.id(), invited.getUniqueId());
+        branchRepository.addInviteRequest(branch.id(), invited.getUniqueId(), inviter.getUniqueId(), Instant.now().getEpochSecond());
+        MessageUtil.sendSuccess(invited, inviter.getName() + " 邀请你加入分支: " + branch.id());
+        MessageUtil.sendInfo(invited, "输入 /wg invite accept " + branch.id() + " 接受邀请。");
+        if (alreadyPending) {
+            MessageUtil.sendWarning(inviter, "该玩家已有待处理邀请，已刷新邀请提示。");
+        }
     }
 
     public void uninvitePlayer(Player inviter, UUID invitedUuid, String branchId) {
         Branch branch = resolveOwnedBranch(inviter, branchId);
         branchRepository.removeInvite(branch.id(), invitedUuid);
+        branchRepository.removeInviteRequest(branch.id(), invitedUuid);
         invitedPlayersByBranch.computeIfPresent(branch.id(), (ignored, players) -> {
             players.remove(invitedUuid);
             return players.isEmpty() ? null : players;
         });
+    }
+
+    public Branch acceptInvite(Player player, String branchId) {
+        BranchInviteRequest inviteRequest = resolveInviteRequest(player, branchId);
+        Branch branch = requireBranch(inviteRequest.branchId());
+        if (branch.status() == BranchStatus.MERGED || branch.status() == BranchStatus.ABANDONED) {
+            branchRepository.removeInviteRequest(branch.id(), player.getUniqueId());
+            throw new IllegalStateException("该分支已合并或关闭，邀请已失效。");
+        }
+        if (isInvited(branch, player.getUniqueId())) {
+            branchRepository.removeInviteRequest(branch.id(), player.getUniqueId());
+            return branch;
+        }
+        branchRepository.acceptInviteRequest(branch.id(), player.getUniqueId())
+                .orElseThrow(() -> new IllegalStateException("该邀请已失效，请让分支所有者重新邀请。"));
+        invitedPlayersByBranch
+                .computeIfAbsent(branch.id(), ignored -> ConcurrentHashMap.newKeySet())
+                .add(player.getUniqueId());
+
+        Player owner = Bukkit.getPlayer(branch.ownerUuid());
+        if (owner != null && owner.isOnline() && !owner.getUniqueId().equals(player.getUniqueId())) {
+            MessageUtil.sendSuccess(owner, player.getName() + " 已接受分支邀请: " + branch.id());
+        }
+        return requireBranch(branch.id());
     }
 
     public Optional<Branch> findByWorld(String worldName) {
@@ -511,6 +604,14 @@ public final class BranchManager {
 
     public boolean isOwner(Branch branch, Player player) {
         return branch.ownerUuid().equals(player.getUniqueId());
+    }
+
+    public Branch setBranchLabel(Player player, String branchId, String label) {
+        Branch branch = requireBranch(branchId);
+        ensureOwner(branch, player);
+        branchRepository.saveLabel(branch.id(), normalizeRequiredBranchLabel(label));
+        refreshCachedBranch(branch.id());
+        return requireBranch(branch.id());
     }
 
     private Branch resolveAccessibleBranch(Player player, String branchId) {
@@ -570,6 +671,54 @@ public final class BranchManager {
         }
     }
 
+    private String normalizeOptionalBranchLabel(String label) {
+        if (label == null) {
+            return null;
+        }
+        String normalized = label.trim();
+        if (normalized.isEmpty()) {
+            return null;
+        }
+        if (normalized.length() > BranchDisplayUtil.MAX_LABEL_LENGTH) {
+            throw new IllegalStateException("分支标签最多 " + BranchDisplayUtil.MAX_LABEL_LENGTH + " 个字符。");
+        }
+        return normalized;
+    }
+
+    private String normalizeRequiredBranchLabel(String label) {
+        String normalized = normalizeOptionalBranchLabel(label);
+        if (normalized == null) {
+            throw new IllegalStateException("分支标签不能为空。");
+        }
+        return normalized;
+    }
+
+    private BranchInviteRequest resolveInviteRequest(Player player, String branchId) {
+        if (branchId != null && !branchId.isBlank()) {
+            Branch branch = requireBranch(branchId);
+            if (isInvited(branch, player.getUniqueId())) {
+                return new BranchInviteRequest(branch.id(), player.getUniqueId(), branch.ownerUuid(), Instant.now());
+            }
+            return branchRepository.findInviteRequest(branch.id(), player.getUniqueId())
+                    .orElseThrow(() -> new IllegalStateException("你当前没有这个分支的待接受邀请。"));
+        }
+
+        List<BranchInviteRequest> pendingRequests = branchRepository.listInviteRequestsForPlayer(player.getUniqueId());
+        if (pendingRequests.isEmpty()) {
+            throw new IllegalStateException("你当前没有待接受的分支邀请。");
+        }
+        if (pendingRequests.size() > 1) {
+            String availableBranches = pendingRequests.stream()
+                    .map(BranchInviteRequest::branchId)
+                    .distinct()
+                    .sorted()
+                    .reduce((left, right) -> left + ", " + right)
+                    .orElse("");
+            throw new IllegalStateException("你有多个待接受邀请，请使用 /wg invite accept <分支ID>。可选分支: " + availableBranches);
+        }
+        return pendingRequests.get(0);
+    }
+
     private void closeBranch(Branch branch, BranchStatus finalStatus, long closedAt, String note) {
         Location fallback = worldManager.createReturnLocation(branch.minX(), branch.maxX(), branch.minZ(), branch.maxZ());
         if (!worldManager.unloadWorld(branch.worldName(), fallback)) {
@@ -595,6 +744,7 @@ public final class BranchManager {
     private Branch createBranchFromBounds(
             UUID ownerUuid,
             String ownerName,
+            String label,
             World sourceWorld,
             RegionCopyManager.SelectionBounds selection,
             Player teleportTarget,
@@ -606,6 +756,7 @@ public final class BranchManager {
                 branchId,
                 ownerUuid,
                 ownerName,
+                label,
                 worldName,
                 sourceWorld.getName(),
                 selection.minX(),
@@ -802,6 +953,7 @@ public final class BranchManager {
     public record SelectionOverlap(
             String branchId,
             String ownerName,
+            String branchLabel,
             BranchStatus status,
             RegionCopyManager.SelectionBounds branchBounds,
             RegionCopyManager.SelectionBounds overlapBounds,
@@ -850,7 +1002,7 @@ public final class BranchManager {
         RegionCopyManager.SelectionBounds copiedBounds = regionCopyManager.expandForCopy(mainWorld, editableBounds);
         return new FetchPreview(
                 true,
-                "会保留创建分支时的编辑区，只更新分支复制范围内的外围区域。",
+                "只拉取主线最新状态，不会改动分支方块；外围和编辑区会在 Rebase 时一起同步。",
                 editableBounds,
                 copiedBounds
         );
@@ -865,8 +1017,8 @@ public final class BranchManager {
         if (!preview.available()) {
             throw new IllegalStateException(preview.message());
         }
-        int updatedBlocks = rebaseManager.fetchOutsideSelection(branch);
-        return new FetchResult(updatedBlocks, preview.protectedBounds(), preview.branchBounds());
+        int pendingOutsideBlocks = rebaseManager.countPendingOutsideSelectionBlocks(branch);
+        return new FetchResult(pendingOutsideBlocks, preview.protectedBounds(), preview.branchBounds());
     }
 
     public List<ConflictGroup> listConflictGroups(Player player, String branchId) {
@@ -941,7 +1093,7 @@ public final class BranchManager {
     }
 
     public record FetchResult(
-            int updatedBlocks,
+            int pendingOutsideBlocks,
             RegionCopyManager.SelectionBounds protectedBounds,
             RegionCopyManager.SelectionBounds branchBounds
     ) {

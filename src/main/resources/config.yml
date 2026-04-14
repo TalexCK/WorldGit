@@ -40,3 +40,6 @@ web:
   # BlueMap 页面地址。可填完整 URL，如 "http://127.0.0.1:8100/"，
   # 也可填反向代理后的路径，如 "/bluemap/"。
   bluemap-url: ""
+  # 点云参考页面地址。可填完整 URL，如 "http://127.0.0.1:9620/"，
+  # 也可填反向代理后的路径，如 "/pointcloud/"。
+  pointcloud-url: ""

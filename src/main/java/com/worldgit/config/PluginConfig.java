@@ -34,6 +34,7 @@ public final class PluginConfig {
     private final String webStaticDirectory;
     private final int webRecentLimit;
     private final String webBlueMapUrl;
+    private final String webPointCloudUrl;
 
     private PluginConfig(
             String displayPrefix,
@@ -63,7 +64,8 @@ public final class PluginConfig {
             int webPort,
             String webStaticDirectory,
             int webRecentLimit,
-            String webBlueMapUrl
+            String webBlueMapUrl,
+            String webPointCloudUrl
     ) {
         this.displayPrefix = displayPrefix;
         this.mainWorld = mainWorld;
@@ -93,6 +95,7 @@ public final class PluginConfig {
         this.webStaticDirectory = webStaticDirectory;
         this.webRecentLimit = webRecentLimit;
         this.webBlueMapUrl = webBlueMapUrl;
+        this.webPointCloudUrl = webPointCloudUrl;
     }
 
     public static PluginConfig load(JavaPlugin plugin) {
@@ -125,7 +128,8 @@ public final class PluginConfig {
                 normalizePort(config.getInt("web.port", 80)),
                 normalizeDirectory(config.getString("web.static-directory", "web"), "web"),
                 Math.max(1, config.getInt("web.recent-limit", 20)),
-                normalizeOptional(config.getString("web.bluemap-url", ""))
+                normalizeOptional(config.getString("web.bluemap-url", "")),
+                normalizeOptional(config.getString("web.pointcloud-url", ""))
         );
     }
 
@@ -303,5 +307,9 @@ public final class PluginConfig {
 
     public String webBlueMapUrl() {
         return webBlueMapUrl;
+    }
+
+    public String webPointCloudUrl() {
+        return webPointCloudUrl;
     }
 }

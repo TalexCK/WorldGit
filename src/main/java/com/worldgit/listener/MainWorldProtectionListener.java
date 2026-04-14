@@ -14,6 +14,7 @@ import org.bukkit.event.Event;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockDispenseEvent;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockBurnEvent;
@@ -109,6 +110,13 @@ public final class MainWorldProtectionListener implements Listener {
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = true)
     public void onPlayerInteract(PlayerInteractEvent event) {
+        if (event.getClickedBlock() != null
+                && event.getAction() == Action.RIGHT_CLICK_BLOCK
+                && protectionService.isMainWorld(event.getClickedBlock().getWorld())) {
+            event.setUseInteractedBlock(Event.Result.DENY);
+            denyIfProtected(event, event.getPlayer().getWorld(), event.getPlayer());
+            return;
+        }
         if (event.useItemInHand() == Event.Result.DENY) {
             return;
         }

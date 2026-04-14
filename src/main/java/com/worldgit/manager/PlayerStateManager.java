@@ -3,6 +3,7 @@ package com.worldgit.manager;
 import com.worldgit.WorldGitPlugin;
 import com.worldgit.config.PluginConfig;
 import com.worldgit.model.Branch;
+import com.worldgit.util.BranchDisplayUtil;
 import com.worldgit.util.MessageUtil;
 import java.util.Map;
 import java.util.UUID;
@@ -130,7 +131,9 @@ public final class PlayerStateManager {
             return "主世界";
         }
         if (worldManager.isBranchWorld(world)) {
-            return worldManager.branchLabel(world.getName());
+            return branchManager.findByWorld(world.getName())
+                    .map(BranchDisplayUtil::actionBarName)
+                    .orElse(worldManager.branchLabel(world.getName()));
         }
         return world.getName();
     }

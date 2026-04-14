@@ -18,12 +18,7 @@ public final class RegionCopyManager {
     }
 
     public void validate(SelectionBounds bounds) {
-        if (bounds.widthX() > pluginConfig.maxRegionSizeX()) {
-            throw new IllegalStateException("所选区域 X 长度超过限制: " + pluginConfig.maxRegionSizeX());
-        }
-        if (bounds.widthZ() > pluginConfig.maxRegionSizeZ()) {
-            throw new IllegalStateException("所选区域 Z 长度超过限制: " + pluginConfig.maxRegionSizeZ());
-        }
+        // 1.1.1 起取消 Pos1 / Pos2 选区尺寸上限，仅保留后续复制与世界边界校验。
     }
 
     public void copyRegion(World source, World target, SelectionBounds bounds) {
@@ -37,6 +32,16 @@ public final class RegionCopyManager {
             SelectionBounds excludedBounds
     ) {
         return copyRegion(source, target, bounds.minX(), bounds.minY(), bounds.minZ(),
+                bounds.maxX(), bounds.maxY(), bounds.maxZ(), excludedBounds);
+    }
+
+    public int countRegionDifferencesOutsideExclusion(
+            World source,
+            World target,
+            SelectionBounds bounds,
+            SelectionBounds excludedBounds
+    ) {
+        return countRegionDifferences(source, target, bounds.minX(), bounds.minY(), bounds.minZ(),
                 bounds.maxX(), bounds.maxY(), bounds.maxZ(), excludedBounds);
     }
 
@@ -81,12 +86,49 @@ public final class RegionCopyManager {
                     Block sourceBlock = source.getBlockAt(x, y, z);
                     Block targetBlock = target.getBlockAt(x, y, z);
                     BlockData data = sourceBlock.getBlockData().clone();
+                    if (data.equals(targetBlock.getBlockData())) {
+                        continue;
+                    }
                     targetBlock.setBlockData(data, false);
                     copiedBlocks++;
                 }
             }
         }
         return copiedBlocks;
+    }
+
+    private int countRegionDifferences(
+            World source,
+            World target,
+            int minX,
+            int minY,
+            int minZ,
+            int maxX,
+            int maxY,
+            int maxZ,
+            SelectionBounds excludedBounds
+    ) {
+        preloadChunks(source, minX, minZ, maxX, maxZ);
+        preloadChunks(target, minX, minZ, maxX, maxZ);
+        int differentBlocks = 0;
+        for (int x = minX; x <= maxX; x++) {
+            for (int z = minZ; z <= maxZ; z++) {
+                for (int y = minY; y <= maxY; y++) {
+                    if (excludedBounds != null
+                            && x >= excludedBounds.minX() && x <= excludedBounds.maxX()
+                            && y >= excludedBounds.minY() && y <= excludedBounds.maxY()
+                            && z >= excludedBounds.minZ() && z <= excludedBounds.maxZ()) {
+                        continue;
+                    }
+                    BlockData sourceData = source.getBlockAt(x, y, z).getBlockData();
+                    BlockData targetData = target.getBlockAt(x, y, z).getBlockData();
+                    if (!sourceData.equals(targetData)) {
+                        differentBlocks++;
+                    }
+                }
+            }
+        }
+        return differentBlocks;
     }
 
     private void preloadChunks(World world, int minX, int minZ, int maxX, int maxZ) {

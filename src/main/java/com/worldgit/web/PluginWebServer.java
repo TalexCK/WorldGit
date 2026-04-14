@@ -6,6 +6,7 @@ import com.worldgit.WorldGitPlugin;
 import com.worldgit.config.PluginConfig;
 import com.worldgit.database.BranchRepository;
 import com.worldgit.model.Branch;
+import com.worldgit.model.PlayerMergeLeaderboardEntry;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -66,6 +67,7 @@ public final class PluginWebServer {
             );
             httpServer.createContext("/api/health", this::handleHealth);
             httpServer.createContext("/api/activity/recent", this::handleRecentActivity);
+            httpServer.createContext("/api/stats/merge-leaderboard", this::handleMergeLeaderboard);
             httpServer.createContext("/", this::handleStatic);
 
             executor = Executors.newFixedThreadPool(4, new WebThreadFactory());
@@ -139,6 +141,7 @@ public final class PluginWebServer {
                     + "\"version\":" + jsonString(plugin.getDescription().getVersion()) + ","
                     + "\"prefix\":" + jsonString(pluginConfig.displayPrefix()) + ","
                     + "\"blueMapUrl\":" + jsonString(pluginConfig.webBlueMapUrl()) + ","
+                    + "\"pointCloudUrl\":" + jsonString(pluginConfig.webPointCloudUrl()) + ","
                     + "\"generatedAt\":" + jsonString(Instant.now().toString())
                     + "}";
             sendJson(exchange, 200, body);
@@ -172,6 +175,30 @@ public final class PluginWebServer {
             sendJson(exchange, 200, body);
         } catch (Exception exception) {
             sendServerError(exchange, "recent_activity_failed", exception);
+        }
+    }
+
+    private void handleMergeLeaderboard(HttpExchange exchange) throws IOException {
+        try {
+            if (handleOptions(exchange)) {
+                return;
+            }
+            if (!isGet(exchange)) {
+                sendMethodNotAllowed(exchange);
+                return;
+            }
+
+            int limit = resolveLimit(exchange);
+            List<PlayerMergeLeaderboardEntry> leaderboard = branchRepository.listMergeLeaderboardUnchecked(limit);
+
+            String body = "{"
+                    + "\"generatedAt\":" + jsonString(Instant.now().toString()) + ","
+                    + "\"limit\":" + limit + ","
+                    + "\"leaderboard\":" + serializeLeaderboard(leaderboard)
+                    + "}";
+            sendJson(exchange, 200, body);
+        } catch (Exception exception) {
+            sendServerError(exchange, "merge_leaderboard_failed", exception);
         }
     }
 
@@ -321,6 +348,7 @@ public final class PluginWebServer {
                 + "\"eventAt\":" + jsonString(eventAt == null ? null : eventAt.toString()) + ","
                 + "\"ownerName\":" + jsonString(branch.ownerName()) + ","
                 + "\"ownerUuid\":" + jsonString(branch.ownerUuid().toString()) + ","
+                + "\"branchLabel\":" + jsonString(branch.label()) + ","
                 + "\"worldName\":" + jsonString(branch.worldName()) + ","
                 + "\"mainWorld\":" + jsonString(branch.mainWorld()) + ","
                 + "\"status\":" + jsonString(branch.status().dbValue()) + ","
@@ -330,6 +358,24 @@ public final class PluginWebServer {
                 + "\"mergedByUuid\":" + jsonString(branch.mergedBy() == null ? null : branch.mergedBy().toString()) + ","
                 + "\"mergeMessage\":" + jsonString(branch.mergeMessage())
                 + "}";
+    }
+
+    private String serializeLeaderboard(List<PlayerMergeLeaderboardEntry> entries) {
+        StringBuilder builder = new StringBuilder("[");
+        for (int index = 0; index < entries.size(); index++) {
+            if (index > 0) {
+                builder.append(',');
+            }
+            PlayerMergeLeaderboardEntry entry = entries.get(index);
+            builder.append("{")
+                    .append("\"playerUuid\":").append(jsonString(entry.playerUuid().toString())).append(',')
+                    .append("\"playerName\":").append(jsonString(entry.playerName())).append(',')
+                    .append("\"totalChangedBlocks\":").append(entry.totalChangedBlocks()).append(',')
+                    .append("\"mergedBranchCount\":").append(entry.mergedBranchCount()).append(',')
+                    .append("\"lastMergedAt\":").append(jsonString(entry.lastMergedAt() == null ? null : entry.lastMergedAt().toString()))
+                    .append('}');
+        }
+        return builder.append(']').toString();
     }
 
     private String jsonString(String value) {

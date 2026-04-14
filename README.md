@@ -231,6 +231,7 @@ The plugin blocks direct edits in the configured main world, including:
 
 - Block place and multi-place
 - Block break
+- Axiom edit packets such as Replace, Angel, and buffer updates
 - Bucket empty/fill
 - Bone meal and fertilization updates
 - Fluid and block-state changes such as spread, fade, form, and flow
@@ -251,8 +252,9 @@ Admins with `worldgit.admin.bypass` can bypass player-driven protection checks.
 
 1. Start a fresh Paper `1.21.11` server.
 2. Install `WorldEdit`, `Multiverse-Core`, and `WorldGit`.
-3. Confirm all three plugins load without errors.
-4. Confirm the main world name matches `config.yml`.
+3. If the server also runs `AxiomPaper`, install `ProtocolLib` as well so Axiom custom edit packets can be intercepted.
+4. Confirm the relevant plugins load without errors.
+5. Confirm the main world name matches `config.yml`.
 
 ### Branch Creation
 

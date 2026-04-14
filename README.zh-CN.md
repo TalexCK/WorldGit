@@ -229,6 +229,7 @@ database:
 
 - 方块放置与多方块放置
 - 方块破坏
+- Axiom 的改块包（如 Replace / Angel / Buffer 等）会被直接拦截
 - 水桶/岩浆桶相关操作
 - 骨粉和施肥引起的方块更新
 - 液体流动、蔓延、褪变、生成等状态变化
@@ -249,8 +250,9 @@ database:
 
 1. 启动一个全新的 Paper `1.21.11` 服务端。
 2. 安装 `WorldEdit`、`Multiverse-Core` 和 `WorldGit`。
-3. 确认三个插件都能正常加载，无报错。
-4. 确认 `config.yml` 里的主世界名与服务端一致。
+3. 若服务端同时安装了 `AxiomPaper`，还需要安装 `ProtocolLib`，否则无法拦截 Axiom 自定义改块包。
+4. 确认相关插件都能正常加载，无报错。
+5. 确认 `config.yml` 里的主世界名与服务端一致。
 
 ### 分支创建
 

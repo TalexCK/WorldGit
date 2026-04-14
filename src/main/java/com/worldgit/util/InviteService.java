@@ -11,16 +11,25 @@ public interface InviteService {
 
     boolean invite(CommandSender sender, String target, String branchId);
 
+    boolean accept(CommandSender sender, String branchId);
+
     boolean uninvite(CommandSender sender, String target, String branchId);
 
     List<String> suggestTargets(CommandSender sender, String prefix);
 
     List<String> suggestBranchIds(CommandSender sender, String prefix);
 
+    List<String> suggestPendingBranchIds(CommandSender sender, String prefix);
+
     static InviteService noop() {
         return new InviteService() {
             @Override
             public boolean invite(CommandSender sender, String target, String branchId) {
+                return false;
+            }
+
+            @Override
+            public boolean accept(CommandSender sender, String branchId) {
                 return false;
             }
 
@@ -36,6 +45,11 @@ public interface InviteService {
 
             @Override
             public List<String> suggestBranchIds(CommandSender sender, String prefix) {
+                return List.of();
+            }
+
+            @Override
+            public List<String> suggestPendingBranchIds(CommandSender sender, String prefix) {
                 return List.of();
             }
         };

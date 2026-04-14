@@ -19,13 +19,16 @@ import com.worldgit.listener.MainWorldEnforcementListener;
 import com.worldgit.listener.MainWorldProtectionListener;
 import com.worldgit.listener.PlayerConnectionListener;
 import com.worldgit.listener.PlayerStateListener;
+import com.worldgit.manager.AxiomProtectionHook;
 import com.worldgit.manager.BackupManager;
 import com.worldgit.manager.BranchManager;
+import com.worldgit.manager.BranchChangeManager;
 import com.worldgit.manager.BlueMapEditRegionManager;
 import com.worldgit.manager.ConflictToolManager;
 import com.worldgit.manager.GitHubSyncManager;
 import com.worldgit.manager.LockManager;
 import com.worldgit.manager.MergeManager;
+import com.worldgit.manager.MergeStatManager;
 import com.worldgit.manager.PlayerSelectionManager;
 import com.worldgit.manager.PlayerStateManager;
 import com.worldgit.manager.ProtectionManager;
@@ -49,7 +52,7 @@ import java.sql.SQLException;
 import java.util.Objects;
 import org.bukkit.Difficulty;
 import org.bukkit.GameMode;
-import org.bukkit.GameRule;
+import org.bukkit.GameRules;
 import org.bukkit.World;
 import org.bukkit.entity.Ambient;
 import org.bukkit.entity.Animals;
@@ -57,6 +60,7 @@ import org.bukkit.entity.WaterMob;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.generator.ChunkGenerator;
 import org.bukkit.event.HandlerList;
+import org.bukkit.plugin.Plugin;
 import org.bukkit.plugin.java.JavaPlugin;
 
 public final class WorldGitPlugin extends JavaPlugin {
@@ -81,6 +85,9 @@ public final class WorldGitPlugin extends JavaPlugin {
     private BranchManager branchManager;
     private BlueMapEditRegionManager blueMapEditRegionManager;
     private ConflictToolManager conflictToolManager;
+    private BranchChangeManager branchChangeManager;
+    private MergeStatManager mergeStatManager;
+    private AxiomProtectionHook axiomProtectionHook;
     private PlayerSelectionManager selectionManager;
     private PlayerStateManager playerStateManager;
     private ReviewMenuManager reviewMenuManager;
@@ -102,6 +109,7 @@ public final class WorldGitPlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        stopAxiomProtectionHook();
         if (backupManager != null) {
             backupManager.stop();
         }
@@ -160,6 +168,7 @@ public final class WorldGitPlugin extends JavaPlugin {
         if (webServer != null) {
             webServer.stop();
         }
+        stopAxiomProtectionHook();
         HandlerList.unregisterAll(this);
         if (databaseManager != null) {
             try {
@@ -179,10 +188,13 @@ public final class WorldGitPlugin extends JavaPlugin {
         revisionRepository = new RevisionRepository(databaseManager);
 
         protectionManager = new ProtectionManager(pluginConfig);
+        axiomProtectionHook = createAxiomProtectionHook();
         worldManager = new WorldManager(this, pluginConfig);
         regionCopyManager = new RegionCopyManager(pluginConfig);
         snapshotManager = new SnapshotManager(this);
         selectionManager = new PlayerSelectionManager();
+        branchChangeManager = new BranchChangeManager(snapshotManager, worldManager);
+        mergeStatManager = new MergeStatManager(this, branchRepository, branchSyncRepository, branchChangeManager);
         queueManager = new QueueManager(this, pluginConfig, queueRepository);
         lockManager = new LockManager(lockRepository);
         rebaseManager = new RebaseManager(
@@ -202,7 +214,8 @@ public final class WorldGitPlugin extends JavaPlugin {
                 lockManager,
                 queueManager,
                 worldManager,
-                regionCopyManager
+                regionCopyManager,
+                mergeStatManager
         );
         backupManager = new BackupManager(this, pluginConfig);
         gitHubSyncManager = new GitHubSyncManager(this, pluginConfig);
@@ -219,7 +232,7 @@ public final class WorldGitPlugin extends JavaPlugin {
                 selectionManager,
                 protectionManager
         );
-        reviewMenuManager = new ReviewMenuManager(this, branchManager);
+        reviewMenuManager = new ReviewMenuManager(this, branchManager, branchChangeManager);
         blueMapEditRegionManager = new BlueMapEditRegionManager(this, branchManager);
         conflictToolManager = new ConflictToolManager(this, branchManager);
         playerMenuManager = new PlayerMenuManager(this, branchManager, conflictToolManager, reviewMenuManager);
@@ -228,6 +241,7 @@ public final class WorldGitPlugin extends JavaPlugin {
 
         registerCommands();
         registerListeners();
+        startAxiomProtectionHook();
         applyMainWorldSettings();
         backupManager.start();
         gitHubSyncManager.start();
@@ -239,6 +253,7 @@ public final class WorldGitPlugin extends JavaPlugin {
         blueMapEditRegionManager.start();
         rebaseManager.recoverIncompleteRebases();
         mergeManager.recoverIncompleteMerges();
+        mergeStatManager.backfillMissingMergedBranchStats();
         webServer = new PluginWebServer(this, pluginConfig, branchRepository);
         webServer.start();
     }
@@ -264,10 +279,10 @@ public final class WorldGitPlugin extends JavaPlugin {
         }
 
         mainWorld.setDifficulty(Difficulty.PEACEFUL);
-        mainWorld.setGameRule(GameRule.DO_MOB_SPAWNING,   false);
-        mainWorld.setGameRule(GameRule.DO_DAYLIGHT_CYCLE, false);
-        mainWorld.setGameRule(GameRule.DO_WEATHER_CYCLE,  false);
-        mainWorld.setGameRule(GameRule.MOB_GRIEFING,      false);
+        mainWorld.setGameRule(GameRules.SPAWN_MOBS,       false);
+        mainWorld.setGameRule(GameRules.ADVANCE_TIME,     false);
+        mainWorld.setGameRule(GameRules.ADVANCE_WEATHER,  false);
+        mainWorld.setGameRule(GameRules.MOB_GRIEFING,     false);
         mainWorld.setSpawnFlags(false, false);
         mainWorld.setTime(6000); // 正午
         mainWorld.setStorm(false);
@@ -332,6 +347,42 @@ public final class WorldGitPlugin extends JavaPlugin {
                 playerMenuManager,
                 this
         );
+    }
+
+    private AxiomProtectionHook createAxiomProtectionHook() {
+        Plugin protocolLib = getServer().getPluginManager().getPlugin("ProtocolLib");
+        if (protocolLib == null || !protocolLib.isEnabled()) {
+            Plugin axiomPaper = getServer().getPluginManager().getPlugin("AxiomPaper");
+            if (axiomPaper != null && axiomPaper.isEnabled()) {
+                getLogger().warning("检测到 AxiomPaper，但未安装或未启用 ProtocolLib，无法拦截 Axiom 自定义改块包。");
+            }
+            return null;
+        }
+
+        try {
+            Class<?> hookClass = Class.forName("com.worldgit.manager.ProtocolLibAxiomProtectionHook");
+            return (AxiomProtectionHook) hookClass
+                    .getConstructor(WorldGitPlugin.class, com.worldgit.util.ProtectionService.class)
+                    .newInstance(this, protectionManager);
+        } catch (ReflectiveOperationException | LinkageError exception) {
+            getLogger().warning("初始化 Axiom 包拦截器失败: " + exception.getMessage());
+            return null;
+        }
+    }
+
+    private void startAxiomProtectionHook() {
+        if (axiomProtectionHook == null) {
+            return;
+        }
+        axiomProtectionHook.start();
+    }
+
+    private void stopAxiomProtectionHook() {
+        if (axiomProtectionHook == null) {
+            return;
+        }
+        axiomProtectionHook.stop();
+        axiomProtectionHook = null;
     }
 
     @Override

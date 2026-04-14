@@ -10,6 +10,7 @@ import com.worldgit.model.BranchStatus;
 import com.worldgit.model.RegionLock;
 import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.World;
@@ -34,6 +35,7 @@ public final class MergeManager {
     private final QueueManager queueManager;
     private final WorldManager worldManager;
     private final RegionCopyManager regionCopyManager;
+    private final MergeStatManager mergeStatManager;
 
     public MergeManager(
             WorldGitPlugin plugin,
@@ -44,7 +46,8 @@ public final class MergeManager {
             LockManager lockManager,
             QueueManager queueManager,
             WorldManager worldManager,
-            RegionCopyManager regionCopyManager
+            RegionCopyManager regionCopyManager,
+            MergeStatManager mergeStatManager
     ) {
         this.plugin = plugin;
         this.pluginConfig = pluginConfig;
@@ -55,6 +58,7 @@ public final class MergeManager {
         this.queueManager = queueManager;
         this.worldManager = worldManager;
         this.regionCopyManager = regionCopyManager;
+        this.mergeStatManager = mergeStatManager;
     }
 
     public void confirmMerge(Player player, Branch branch, String mergeMessage) {
@@ -64,8 +68,11 @@ public final class MergeManager {
         if (!branch.ownerUuid().equals(player.getUniqueId())) {
             throw new IllegalStateException("只能确认自己的分支");
         }
-        branchRepository.saveMergeMetadata(branch.id(), player.getUniqueId(), normalizeMergeMessage(mergeMessage));
-        resumeMerge(branch.id());
+        beginMerge(branch, player.getUniqueId(), mergeMessage);
+    }
+
+    public void forceMerge(Branch branch, UUID mergedBy, String mergeMessage) {
+        beginMerge(branch, mergedBy, mergeMessage);
     }
 
     public void recoverIncompleteMerges() {
@@ -98,6 +105,7 @@ public final class MergeManager {
         }
 
         if (PHASE_STARTED.equals(phase)) {
+            mergeStatManager.recordMergedBranchStat(branch);
             copyBlocks(branch);
             databaseManager.upsertMergePhase(branch.id(), PHASE_BLOCKS_COPIED);
             phase = PHASE_BLOCKS_COPIED;
@@ -212,5 +220,10 @@ public final class MergeManager {
             return "未填写合并说明";
         }
         return mergeMessage.trim();
+    }
+
+    private void beginMerge(Branch branch, UUID mergedBy, String mergeMessage) {
+        branchRepository.saveMergeMetadata(branch.id(), mergedBy, normalizeMergeMessage(mergeMessage));
+        resumeMerge(branch.id());
     }
 }

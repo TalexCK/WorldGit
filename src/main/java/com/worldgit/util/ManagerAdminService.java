@@ -7,18 +7,26 @@ import com.worldgit.manager.GitHubSyncManager;
 import com.worldgit.manager.LockManager;
 import com.worldgit.model.Branch;
 import com.worldgit.model.RegionLock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import org.bukkit.Bukkit;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 
 public final class ManagerAdminService implements AdminService {
 
+    private static final Duration FORCE_MERGE_CONFIRM_TTL = Duration.ofSeconds(30);
+
     private final WorldGitPlugin plugin;
     private final BranchManager branchManager;
     private final LockManager lockManager;
     private final BackupManager backupManager;
     private final GitHubSyncManager gitHubSyncManager;
+    private final Map<String, PendingForceMerge> pendingForceMerges = new ConcurrentHashMap<>();
 
     public ManagerAdminService(
             WorldGitPlugin plugin,
@@ -99,6 +107,34 @@ public final class ManagerAdminService implements AdminService {
     }
 
     @Override
+    public boolean forceMerge(CommandSender sender, String branchId, boolean confirmed) {
+        requirePermission(sender, "worldgit.admin.forcemerge");
+        Branch branch = branchManager.requireBranch(branchId);
+        validateForceMergeTarget(branch);
+
+        String confirmationKey = confirmationKey(sender);
+        if (!confirmed) {
+            pendingForceMerges.put(confirmationKey, new PendingForceMerge(branch.id(), Instant.now()));
+            MessageUtil.sendWarning(sender, "⚠ 强制合并会用分支世界当前内容直接覆盖主世界对应区域。");
+            MessageUtil.sendInfo(sender, "目标分支: " + branch.id() + " | " + branch.ownerName() + " | " + branch.status());
+            MessageUtil.sendInfo(sender,
+                    "确认命令: /wg admin forcemerge " + branch.id() + " confirm"
+                            + " （30 秒内有效）");
+            return true;
+        }
+
+        PendingForceMerge pending = pendingForceMerges.remove(confirmationKey);
+        if (pending == null || !pending.branchId().equals(branch.id()) || pending.isExpired()) {
+            throw new IllegalStateException("二次确认已失效，请先重新执行 /wg admin forcemerge " + branch.id());
+        }
+
+        String mergeMessage = buildForceMergeMessage(sender);
+        branchManager.forceMergeBranch(sender, branch.id(), mergeMessage);
+        MessageUtil.sendSuccess(sender, "已开始强制合并分支: " + branch.id());
+        return true;
+    }
+
+    @Override
     public boolean list(CommandSender sender, String playerName) {
         requirePermission(sender, "worldgit.admin.list");
         List<Branch> branches = branchManager.listAllBranches().stream()
@@ -138,6 +174,16 @@ public final class ManagerAdminService implements AdminService {
                 .toList();
     }
 
+    @Override
+    public List<String> suggestBranchIds(CommandSender sender, String prefix) {
+        String normalized = prefix == null ? "" : prefix.toLowerCase();
+        return branchManager.listAllBranches().stream()
+                .map(Branch::id)
+                .filter(id -> id.toLowerCase().startsWith(normalized))
+                .sorted(String.CASE_INSENSITIVE_ORDER)
+                .toList();
+    }
+
     private Player requirePlayer(CommandSender sender) {
         if (sender instanceof Player player) {
             return player;
@@ -148,6 +194,31 @@ public final class ManagerAdminService implements AdminService {
     private void requirePermission(CommandSender sender, String permission) {
         if (!sender.hasPermission(permission)) {
             throw new IllegalStateException("你没有权限执行该命令");
+        }
+    }
+
+    private void validateForceMergeTarget(Branch branch) {
+        if (branch.status() == com.worldgit.model.BranchStatus.ABANDONED) {
+            throw new IllegalStateException("已废弃分支不能再强制合并。");
+        }
+    }
+
+    private String buildForceMergeMessage(CommandSender sender) {
+        return "管理员强制合并 by " + sender.getName();
+    }
+
+    private String confirmationKey(CommandSender sender) {
+        if (sender instanceof Player player) {
+            UUID uuid = player.getUniqueId();
+            return "player:" + uuid;
+        }
+        return "sender:" + sender.getName().toLowerCase();
+    }
+
+    private record PendingForceMerge(String branchId, Instant createdAt) {
+
+        private boolean isExpired() {
+            return createdAt.plus(FORCE_MERGE_CONFIRM_TTL).isBefore(Instant.now());
         }
     }
 }

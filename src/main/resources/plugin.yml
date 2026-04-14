@@ -1,11 +1,12 @@
 name: WorldGit
 version: ${version}
 main: com.worldgit.WorldGitPlugin
-api-version: '1.21'
+api-version: "1.21"
 load: POSTWORLD
 authors:
-  - Codex
+  - TalexCK
 softdepend:
+  - ProtocolLib
   - Multiverse-Core
   - LuckPerms
   - BlueMap
@@ -39,6 +40,8 @@ permissions:
   worldgit.admin.review:
     default: op
   worldgit.admin.close:
+    default: op
+  worldgit.admin.forcemerge:
     default: op
   worldgit.admin.assign:
     default: op

@@ -67,20 +67,25 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
     private static final String MERGE_SELECT_TITLE = "选择合并分支";
     private static final String MERGE_HISTORY_TITLE = "合并记录";
     private static final String MERGE_HISTORY_DETAIL_TITLE = "合并记录详情 ";
+    private static final String ALL_BRANCHES_TITLE = "全部分支";
     private static final String POS1_SIGN_HINT = "设置 Pos1";
     private static final String POS2_SIGN_HINT = "设置 Pos2";
     private static final String MERGE_MESSAGE_SIGN_HINT = "合并说明";
+    private static final String BRANCH_LABEL_SIGN_HINT = "分支标签";
     private static final int MERGE_HISTORY_PAGE_SIZE = 45;
+    private static final int ALL_BRANCHES_PAGE_SIZE = 45;
     private static final int CONFLICT_PAGE_SIZE = 36;
 
     private static final String ACTION_POS1 = "pos1";
     private static final String ACTION_POS2 = "pos2";
     private static final String ACTION_CREATE = "create";
     private static final String ACTION_CREATE_CONFIRM = "create-confirm";
+    private static final String ACTION_CREATE_EDIT_LABEL = "create-edit-label";
     private static final String ACTION_QUEUE = "queue";
     private static final String ACTION_CREATE_DISABLED = "create-disabled";
     private static final String ACTION_OPEN_MERGE_SELECT = "open-merge-select";
     private static final String ACTION_OPEN_MERGE_HISTORY = "open-merge-history";
+    private static final String ACTION_OPEN_ALL_BRANCHES = "open-all-branches";
     private static final String ACTION_MAIN_WORLD = "main-world";
     private static final String ACTION_REFRESH = "refresh";
     private static final String ACTION_SUBMIT = "submit";
@@ -88,6 +93,7 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
     private static final String ACTION_ABANDON = "abandon";
     private static final String ACTION_CANCEL = "cancel";
     private static final String ACTION_REVIEW = "review";
+    private static final String ACTION_CURRENT_REVIEW = "current-review";
     private static final String ACTION_QUEUE_ENTRY = "queue-entry";
     private static final String ACTION_OPEN_BRANCH_DETAIL = "open-branch-detail";
     private static final String ACTION_BRANCH_TELEPORT = "branch-teleport";
@@ -95,6 +101,7 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
     private static final String ACTION_BRANCH_FETCH = "branch-fetch";
     private static final String ACTION_BRANCH_CONFLICTS = "branch-conflicts";
     private static final String ACTION_BRANCH_FORCE_EDIT = "branch-forceedit";
+    private static final String ACTION_BRANCH_EDIT_LABEL = "branch-edit-label";
     private static final String ACTION_BRANCH_ABANDON = "branch-abandon";
     private static final String ACTION_BRANCH_BACK = "branch-back";
     private static final String ACTION_CONFLICT_OPEN = "conflict-open";
@@ -114,6 +121,9 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
     private static final String ACTION_VIEW_MERGE_RECORD = "view-merge-record";
     private static final String ACTION_HISTORY_PREVIOUS = "history-previous";
     private static final String ACTION_HISTORY_NEXT = "history-next";
+    private static final String ACTION_ALL_BRANCHES_PREVIOUS = "all-branches-previous";
+    private static final String ACTION_ALL_BRANCHES_NEXT = "all-branches-next";
+    private static final String ACTION_ALL_BRANCHES_TELEPORT = "all-branches-teleport";
     private static final String ACTION_TELEPORT_RECORD_BRANCH = "teleport-record-branch";
     private static final String ACTION_BACK_TO_HISTORY = "back-to-history";
 
@@ -128,7 +138,8 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
     private final NamespacedKey groupKey;
     private final NamespacedKey compassKey;
     private final Map<UUID, PendingSelectionInput> pendingSelectionInputs = new ConcurrentHashMap<>();
-    private final Map<UUID, BranchManager.CreateBranchPreview> pendingCreatePreviews = new ConcurrentHashMap<>();
+    private final Map<UUID, PendingCreateState> pendingCreateStates = new ConcurrentHashMap<>();
+    private final Map<UUID, PendingBranchLabelInput> pendingBranchLabelInputs = new ConcurrentHashMap<>();
     private final Map<UUID, PendingMergeInput> pendingMergeInputs = new ConcurrentHashMap<>();
     private final Map<UUID, Map<String, Set<Integer>>> selectedConflictGroupsByPlayer = new ConcurrentHashMap<>();
     private BukkitTask menuBookTask;
@@ -170,13 +181,14 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
         holder.setInventory(inventory);
 
         List<Branch> ownBranches = sortedOwnBranches(player);
-        List<Branch> editingBranches = ownBranches.stream()
+        List<Branch> editingBranches = sortedEditableBranches(player).stream()
                 .filter(branch -> branch.status() == BranchStatus.ACTIVE || branch.status() == BranchStatus.REJECTED)
                 .toList();
         List<Branch> waitingBranches = ownBranches.stream()
                 .filter(branch -> branch.status() == BranchStatus.SUBMITTED || branch.status() == BranchStatus.APPROVED)
                 .toList();
         List<Branch> mergedBranches = branchManager.listOwnMergedBranches(player);
+        List<Branch> allBranches = sortedAllBranches();
         Optional<QueueEntry> queuedSelection = branchManager.getQueuedSelection(player);
 
         inventory.setItem(0, createActionItem(
@@ -198,6 +210,10 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
         inventory.setItem(4, createConfirmButtonItem(ownBranches));
         inventory.setItem(5, createReturnMainWorldItem(player));
         inventory.setItem(6, createAdminMessageItem(ownBranches));
+        Branch currentReviewBranch = resolveCurrentReviewBranch(player);
+        if (currentReviewBranch != null) {
+            inventory.setItem(7, createCurrentReviewItem(currentReviewBranch));
+        }
         inventory.setItem(8, createActionItem(
                 Material.CLOCK,
                 "刷新菜单",
@@ -210,6 +226,7 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
         inventory.setItem(27, createSectionLabel(Material.YELLOW_STAINED_GLASS_PANE, "等待中的分支"));
         inventory.setItem(45, createPlayerGuideItem());
         inventory.setItem(46, createMergeHistoryEntryItem(mergedBranches));
+        inventory.setItem(47, createAllBranchesEntryItem(allBranches));
         populateBranchSection(inventory, 10, 26, editingBranches, "你当前没有可编辑的分支。");
         if (player.hasPermission("worldgit.admin.review")) {
             inventory.setItem(53, createActionItem(
@@ -275,6 +292,11 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
             handleSelectionSignChange(event, pending);
             return;
         }
+        PendingBranchLabelInput labelPending = pendingBranchLabelInputs.remove(event.getPlayer().getUniqueId());
+        if (labelPending != null) {
+            handleBranchLabelSignChange(event, labelPending);
+            return;
+        }
         PendingMergeInput mergePending = pendingMergeInputs.remove(event.getPlayer().getUniqueId());
         if (mergePending != null) {
             handleMergeMessageSignChange(event, mergePending);
@@ -287,11 +309,15 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
         if (pending != null) {
             restoreTemporarySign(pending);
         }
+        PendingBranchLabelInput labelPending = pendingBranchLabelInputs.remove(event.getPlayer().getUniqueId());
+        if (labelPending != null) {
+            restoreTemporarySign(labelPending);
+        }
         PendingMergeInput mergePending = pendingMergeInputs.remove(event.getPlayer().getUniqueId());
         if (mergePending != null) {
             restoreTemporarySign(mergePending);
         }
-        pendingCreatePreviews.remove(event.getPlayer().getUniqueId());
+        pendingCreateStates.remove(event.getPlayer().getUniqueId());
         selectedConflictGroupsByPlayer.remove(event.getPlayer().getUniqueId());
     }
 
@@ -309,6 +335,7 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
                 && !(holder instanceof ConflictListHolder)
                 && !(holder instanceof ConflictActionHolder)
                 && !(holder instanceof MergeSelectMenuHolder)
+                && !(holder instanceof AllBranchesMenuHolder)
                 && !(holder instanceof MergeHistoryMenuHolder)
                 && !(holder instanceof MergeHistoryDetailHolder)) {
             return;
@@ -343,6 +370,10 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
             }
             if (holder instanceof MergeSelectMenuHolder) {
                 handleMergeSelectMenuClick(player, item, event);
+                return;
+            }
+            if (holder instanceof AllBranchesMenuHolder allBranchesHolder) {
+                handleAllBranchesMenuClick(player, item, event, allBranchesHolder);
                 return;
             }
             if (holder instanceof MergeHistoryMenuHolder mergeHistoryHolder) {
@@ -406,15 +437,59 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
         });
     }
 
+    private void handleBranchLabelSignChange(SignChangeEvent event, PendingBranchLabelInput pending) {
+        if (!sameBlock(pending.location(), event.getBlock().getLocation())) {
+            pendingBranchLabelInputs.put(event.getPlayer().getUniqueId(), pending);
+            return;
+        }
+
+        Player player = event.getPlayer();
+        String label = resolveBranchLabel(event);
+        restoreTemporarySignImmediately(pending.location(), pending.previousBlockData());
+
+        Bukkit.getScheduler().runTask(plugin, () -> {
+            if (label.isBlank()) {
+                MessageUtil.sendWarning(player, "未填写分支标签，本次操作已取消。");
+                reopenBranchLabelSourceMenu(player, pending);
+                return;
+            }
+            try {
+                if (pending.target() == BranchLabelInputTarget.CREATE_CONFIRM) {
+                    PendingCreateState state = pendingCreateStates.get(player.getUniqueId());
+                    if (state == null) {
+                        throw new IllegalStateException("创建确认已失效，请重新打开玩家面板。");
+                    }
+                    openCreateConfirmMenu(player, state.withLabel(label));
+                    MessageUtil.sendSuccess(player, "已设置创建标签: " + label);
+                    return;
+                }
+                Branch branch = branchManager.setBranchLabel(player, pending.branchId(), label);
+                MessageUtil.sendSuccess(player, "分支标签已更新: " + branchDisplayName(branch));
+                openBranchDetailMenu(player, branch);
+            } catch (IllegalStateException exception) {
+                MessageUtil.sendError(player, exception.getMessage());
+                reopenBranchLabelSourceMenu(player, pending);
+            }
+        });
+    }
+
     private void handleMainMenuClick(Player player, ItemStack item, InventoryClickEvent event) {
         ItemMeta meta = item.getItemMeta();
+        String action = meta.getPersistentDataContainer().get(actionKey, PersistentDataType.STRING);
         String branchId = meta.getPersistentDataContainer().get(branchKey, PersistentDataType.STRING);
+        if (ACTION_CURRENT_REVIEW.equals(action)) {
+            if (branchId == null || branchId.isBlank()) {
+                return;
+            }
+            requirePermission(player, "worldgit.admin.review");
+            reviewMenuManager.openBranchActionMenu(player, branchId);
+            return;
+        }
         if (branchId != null && !branchId.isBlank()) {
             handleBranchItemClick(player, branchId, event.isLeftClick(), event.isRightClick());
             return;
         }
 
-        String action = meta.getPersistentDataContainer().get(actionKey, PersistentDataType.STRING);
         if (action == null || action.isBlank()) {
             return;
         }
@@ -452,6 +527,7 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
                 openMergeSelectionMenu(player, branchManager.listOwnApprovedBranches(player));
             }
             case ACTION_OPEN_MERGE_HISTORY -> openMergeHistoryMenu(player, 0);
+            case ACTION_OPEN_ALL_BRANCHES -> openAllBranchesMenu(player, 0);
             case ACTION_MAIN_WORLD -> {
                 requirePermission(player, "worldgit.branch.return");
                 if (isInMainWorld(player)) {
@@ -505,8 +581,8 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
 
     private void handleBranchItemClick(Player player, String branchId, boolean leftClick, boolean rightClick) {
         Branch branch = branchManager.requireBranch(branchId);
-        if (!branch.ownerUuid().equals(player.getUniqueId())) {
-            throw new IllegalStateException("只能操作你自己的分支");
+        if (!branchManager.canModifyBranch(player, branch)) {
+            throw new IllegalStateException("只能操作你参与的分支");
         }
         if (!leftClick && !rightClick) {
             return;
@@ -538,13 +614,25 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
                     MessageUtil.sendWarning(player, "Rebase 完成，但发现 " + result.syncInfo().unresolvedGroupCount() + " 组冲突。");
                     openConflictListMenu(player, branchManager.requireBranch(branch.id()));
                 } else {
-                    MessageUtil.sendSuccess(player, "Rebase 完成，自动合入 " + result.autoMergedBlocks() + " 个方块更新。");
+                    MessageUtil.sendSuccess(
+                            player,
+                            "Rebase 完成，已同步外围 "
+                                    + result.outsideSyncedBlocks()
+                                    + " 个方块，自动合入核心区 "
+                                    + result.autoMergedBlocks()
+                                    + " 个方块更新。"
+                    );
                     openBranchDetailMenu(player, branchManager.requireBranch(branch.id()));
                 }
             }
             case ACTION_BRANCH_FETCH -> {
                 BranchManager.FetchResult result = branchManager.fetchOutsideSelection(player, branch.id());
-                MessageUtil.sendSuccess(player, "Fetch 完成，已更新分支外围区域的 " + result.updatedBlocks() + " 个方块。");
+                MessageUtil.sendSuccess(
+                        player,
+                        "Fetch 完成，已拉取主线最新状态；检测到外围区域有 "
+                                + result.pendingOutsideBlocks()
+                                + " 个待同步方块。"
+                );
                 openBranchDetailMenu(player, branchManager.requireBranch(branch.id()));
             }
             case ACTION_BRANCH_CONFLICTS -> openConflictListMenu(player, branch);
@@ -553,6 +641,10 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
                 Branch reopened = branchManager.forceEditBranch(player, branch.id());
                 MessageUtil.sendSuccess(player, "分支已切回编辑状态: " + reopened.id());
                 openBranchDetailMenu(player, reopened);
+            }
+            case ACTION_BRANCH_EDIT_LABEL -> {
+                player.closeInventory();
+                openBranchLabelInput(player, BranchLabelInputTarget.BRANCH_DETAIL, branch.id(), branch.label());
             }
             case ACTION_BRANCH_ABANDON -> {
                 requirePermission(player, "worldgit.branch.abandon");
@@ -715,6 +807,34 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
         openConfirmMenu(player, branch, ACTION_MERGE);
     }
 
+    private void handleAllBranchesMenuClick(Player player, ItemStack item, InventoryClickEvent event, AllBranchesMenuHolder holder) {
+        if (!event.isLeftClick()) {
+            return;
+        }
+        ItemMeta meta = item.getItemMeta();
+        String action = meta.getPersistentDataContainer().get(actionKey, PersistentDataType.STRING);
+        String branchId = meta.getPersistentDataContainer().get(branchKey, PersistentDataType.STRING);
+        if (action == null || action.isBlank()) {
+            return;
+        }
+        switch (action) {
+            case ACTION_ALL_BRANCHES_PREVIOUS -> openAllBranchesMenu(player, holder.page() - 1);
+            case ACTION_ALL_BRANCHES_NEXT -> openAllBranchesMenu(player, holder.page() + 1);
+            case ACTION_ALL_BRANCHES_TELEPORT -> {
+                requirePermission(player, "worldgit.branch.tp");
+                if (branchId == null || branchId.isBlank()) {
+                    return;
+                }
+                player.closeInventory();
+                branchManager.teleportToOverviewBranch(player, branchId);
+                MessageUtil.sendSuccess(player, "正在传送到未合并分支: " + branchId);
+            }
+            case ACTION_CANCEL -> openMainMenu(player);
+            default -> {
+            }
+        }
+    }
+
     private void handleConfirmMenuClick(Player player, ItemStack item, InventoryClickEvent event) {
         if (!event.isLeftClick()) {
             return;
@@ -770,8 +890,17 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
             return;
         }
         if (ACTION_CANCEL.equals(action)) {
-            pendingCreatePreviews.remove(player.getUniqueId());
+            pendingCreateStates.remove(player.getUniqueId());
             openMainMenu(player);
+            return;
+        }
+        if (ACTION_CREATE_EDIT_LABEL.equals(action)) {
+            player.closeInventory();
+            PendingCreateState state = pendingCreateStates.get(player.getUniqueId());
+            if (state == null) {
+                throw new IllegalStateException("创建确认已失效，请重新打开玩家面板。");
+            }
+            openBranchLabelInput(player, BranchLabelInputTarget.CREATE_CONFIRM, null, state.label());
             return;
         }
         if (!ACTION_CREATE_CONFIRM.equals(action)) {
@@ -779,23 +908,23 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
         }
 
         requirePermission(player, "worldgit.branch.create");
-        BranchManager.CreateBranchPreview preview = pendingCreatePreviews.remove(player.getUniqueId());
-        if (preview == null) {
+        PendingCreateState state = pendingCreateStates.remove(player.getUniqueId());
+        if (state == null) {
             throw new IllegalStateException("创建确认已失效，请重新打开玩家面板。");
         }
 
         player.closeInventory();
-        Branch branch = branchManager.createBranchConfirmed(player, preview.selection());
+        Branch branch = branchManager.createBranchConfirmed(player, state.preview().selection(), state.label());
         MessageUtil.sendSuccess(player, holder.hasOverlap()
-                ? "已确认重叠并创建分支: " + branch.id()
-                : "分支创建成功: " + branch.id());
+                ? "已确认重叠并创建分支: " + branchDisplayName(branch)
+                : "分支创建成功: " + branchDisplayName(branch));
     }
 
     private void openBranchDetailMenu(Player player, Branch branch) {
         BranchSyncInfo syncInfo = branchManager.getSyncInfo(branch);
         Branch refreshed = branchManager.requireBranch(branch.id());
         BranchDetailHolder holder = new BranchDetailHolder(refreshed.id());
-        Inventory inventory = Bukkit.createInventory(holder, 54, "分支详情 " + shortId(refreshed.id()));
+        Inventory inventory = Bukkit.createInventory(holder, 54, "分支详情 " + branchDisplayName(refreshed));
         holder.setInventory(inventory);
 
         inventory.setItem(10, createActionItem(
@@ -829,6 +958,7 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
                 materialFor(refreshed.status()),
                 "状态总览",
                 List.of(
+                        "标签：" + branchLabelText(refreshed),
                         "分支状态：" + statusLabel(refreshed.status()),
                         "世界：" + refreshed.worldName(),
                         "区域：(" + refreshed.minX() + ", " + refreshed.minY() + ", " + refreshed.minZ()
@@ -849,6 +979,7 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
                         "审核基线：" + (syncInfo.lastReviewedRevision() == null ? "暂无" : syncInfo.lastReviewedRevision())
                 )
         ));
+        inventory.setItem(16, createBranchLabelEditItem(player, refreshed));
 
         inventory.setItem(19, createActionItem(
                 Material.ANVIL,
@@ -856,8 +987,8 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
                 ACTION_BRANCH_REBASE,
                 refreshed.id(),
                 List.of(
-                        "左键：把当前分支重放到最新主线上",
-                        "如果只想刷新分支外围区域，请改用 Fetch"
+                        "左键：先同步外围区域，再把当前分支重放到最新主线上",
+                        "编辑区内部会按三方合并处理"
                 )
         ));
         inventory.setItem(20, createActionItem(
@@ -931,7 +1062,7 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
         int totalPages = Math.max(1, (groups.size() + CONFLICT_PAGE_SIZE - 1) / CONFLICT_PAGE_SIZE);
         int page = Math.max(0, Math.min(requestedPage, totalPages - 1));
         ConflictListHolder holder = new ConflictListHolder(branch.id(), page, totalPages);
-        Inventory inventory = Bukkit.createInventory(holder, 54, "冲突中心 " + shortId(branch.id()) + " " + (page + 1) + "/" + totalPages);
+        Inventory inventory = Bukkit.createInventory(holder, 54, "冲突中心 " + branchDisplayName(branch) + " " + (page + 1) + "/" + totalPages);
         holder.setInventory(inventory);
         Set<Integer> selectedGroups = selectedConflictGroups(player, branch.id());
 
@@ -1238,9 +1369,74 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
         player.openInventory(inventory);
     }
 
+    private void openAllBranchesMenu(Player player, int requestedPage) {
+        List<Branch> allBranches = sortedAllBranches();
+        int totalPages = Math.max(1, (allBranches.size() + ALL_BRANCHES_PAGE_SIZE - 1) / ALL_BRANCHES_PAGE_SIZE);
+        int page = Math.max(0, Math.min(requestedPage, totalPages - 1));
+
+        AllBranchesMenuHolder holder = new AllBranchesMenuHolder(page, totalPages);
+        Inventory inventory = Bukkit.createInventory(
+                holder,
+                54,
+                ALL_BRANCHES_TITLE + " " + (page + 1) + "/" + totalPages
+        );
+        holder.setInventory(inventory);
+
+        int start = page * ALL_BRANCHES_PAGE_SIZE;
+        int end = Math.min(start + ALL_BRANCHES_PAGE_SIZE, allBranches.size());
+        if (allBranches.isEmpty()) {
+            inventory.setItem(22, createReadonlyItem(
+                    Material.GRAY_STAINED_GLASS_PANE,
+                    "暂无分支",
+                    List.of("当前还没有任何分支。")
+            ));
+        } else {
+            int slot = 0;
+            for (int index = start; index < end; index++) {
+                inventory.setItem(slot++, createAllBranchOverviewItem(player, allBranches.get(index)));
+            }
+        }
+
+        long editableBranchCount = allBranches.stream()
+                .filter(this::isOverviewTeleportable)
+                .count();
+        inventory.setItem(45, createHistoryPageButton(
+                page > 0,
+                Material.ARROW,
+                "上一页",
+                ACTION_ALL_BRANCHES_PREVIOUS,
+                List.of("左键：查看上一页分支")
+        ));
+        inventory.setItem(46, createReadonlyItem(
+                Material.SPYGLASS,
+                "总览说明",
+                List.of(
+                        "分支总数：" + allBranches.size(),
+                        "未合并分支：" + editableBranchCount,
+                        "左键：传送预览未合并分支",
+                        "非成员进入后会保持只读预览"
+                )
+        ));
+        inventory.setItem(49, createActionItem(
+                Material.BOOK,
+                "返回玩家面板",
+                ACTION_CANCEL,
+                null,
+                List.of("左键：返回主菜单")
+        ));
+        inventory.setItem(53, createHistoryPageButton(
+                page + 1 < totalPages,
+                Material.ARROW,
+                "下一页",
+                ACTION_ALL_BRANCHES_NEXT,
+                List.of("左键：查看下一页分支")
+        ));
+        player.openInventory(inventory);
+    }
+
     private void openMergeHistoryDetailMenu(Player player, Branch branch, int returnPage) {
         MergeHistoryDetailHolder holder = new MergeHistoryDetailHolder(branch.id(), returnPage);
-        Inventory inventory = Bukkit.createInventory(holder, 27, MERGE_HISTORY_DETAIL_TITLE + shortId(branch.id()));
+        Inventory inventory = Bukkit.createInventory(holder, 27, MERGE_HISTORY_DETAIL_TITLE + branchDisplayName(branch));
         holder.setInventory(inventory);
 
         inventory.setItem(11, createActionItem(
@@ -1270,7 +1466,7 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
 
     private void openConfirmMenu(Player player, Branch branch, String action) {
         ConfirmMenuHolder holder = new ConfirmMenuHolder(branch.id(), action);
-        Inventory inventory = Bukkit.createInventory(holder, 27, CONFIRM_TITLE_PREFIX + shortId(branch.id()));
+        Inventory inventory = Bukkit.createInventory(holder, 27, CONFIRM_TITLE_PREFIX + branchDisplayName(branch));
         holder.setInventory(inventory);
 
         String title;
@@ -1306,31 +1502,35 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
     }
 
     private void openCreateConfirmMenu(Player player, BranchManager.CreateBranchPreview preview) {
-        pendingCreatePreviews.put(player.getUniqueId(), preview);
+        openCreateConfirmMenu(player, new PendingCreateState(preview, null));
+    }
 
-        CreateConfirmHolder holder = new CreateConfirmHolder(preview.hasOverlap());
+    private void openCreateConfirmMenu(Player player, PendingCreateState state) {
+        pendingCreateStates.put(player.getUniqueId(), state);
+        CreateConfirmHolder holder = new CreateConfirmHolder(state.preview().hasOverlap());
         Inventory inventory = Bukkit.createInventory(
                 holder,
                 54,
-                preview.hasOverlap() ? "创建分支重叠确认" : "确认创建分支"
+                state.preview().hasOverlap() ? "创建分支重叠确认" : "确认创建分支"
         );
         holder.setInventory(inventory);
 
         List<String> confirmLore = new ArrayList<>();
         confirmLore.add("左键：确认创建分支");
-        if (preview.hasOverlap()) {
+        if (state.preview().hasOverlap()) {
             confirmLore.add("你将接受与已有未合并编辑区的重叠");
-            confirmLore.add("重叠率：" + formatPercent(preview.overlapRatio()));
+            confirmLore.add("重叠率：" + formatPercent(state.preview().overlapRatio()));
         } else {
             confirmLore.add("当前选区未与已有未合并编辑区重叠");
         }
         inventory.setItem(11, createActionItem(
-                preview.hasOverlap() ? Material.ORANGE_CONCRETE : Material.LIME_CONCRETE,
-                preview.hasOverlap() ? "确认重叠创建" : "确认创建",
+                state.preview().hasOverlap() ? Material.ORANGE_CONCRETE : Material.LIME_CONCRETE,
+                state.preview().hasOverlap() ? "确认重叠创建" : "确认创建",
                 ACTION_CREATE_CONFIRM,
                 null,
                 confirmLore
         ));
+        inventory.setItem(13, createCreateLabelItem(state.label()));
         inventory.setItem(15, createActionItem(
                 Material.RED_CONCRETE,
                 "取消",
@@ -1338,25 +1538,25 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
                 null,
                 List.of("左键：取消本次创建")
         ));
-        inventory.setItem(22, createCreateSelectionSummaryItem(preview));
-        inventory.setItem(31, createCreateOverlapSummaryItem(preview));
+        inventory.setItem(22, createCreateSelectionSummaryItem(state.preview()));
+        inventory.setItem(31, createCreateOverlapSummaryItem(state.preview()));
 
-        if (preview.hasOverlap()) {
+        if (state.preview().hasOverlap()) {
             int slot = 36;
             int displayed = 0;
             int maxEntries = 18;
-            for (BranchManager.SelectionOverlap overlap : preview.overlaps()) {
+            for (BranchManager.SelectionOverlap overlap : state.preview().overlaps()) {
                 if (displayed >= maxEntries) {
                     break;
                 }
-                inventory.setItem(slot++, createCreateOverlapItem(preview, overlap));
+                inventory.setItem(slot++, createCreateOverlapItem(state.preview(), overlap));
                 displayed++;
             }
-            if (preview.overlaps().size() > maxEntries) {
+            if (state.preview().overlaps().size() > maxEntries) {
                 inventory.setItem(53, createReadonlyItem(
                         Material.BOOK,
                         "其余重叠区域",
-                        List.of("还有 " + (preview.overlaps().size() - maxEntries) + " 个重叠区域未展开")
+                        List.of("还有 " + (state.preview().overlaps().size() - maxEntries) + " 个重叠区域未展开")
                 ));
             }
         } else {
@@ -1396,6 +1596,20 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
         return createReadonlyItem(Material.MAP, "本次创建选区", lore);
     }
 
+    private ItemStack createCreateLabelItem(String label) {
+        return createActionItem(
+                BranchDisplayUtil.hasLabel(label) ? Material.NAME_TAG : Material.OAK_SIGN,
+                "分支标签",
+                ACTION_CREATE_EDIT_LABEL,
+                null,
+                List.of(
+                        "当前标签：" + BranchDisplayUtil.labelText(label),
+                        "左键：用告示牌输入标签",
+                        "创建后也可以在分支详情里继续修改"
+                )
+        );
+    }
+
     private ItemStack createCreateOverlapSummaryItem(BranchManager.CreateBranchPreview preview) {
         if (!preview.hasOverlap()) {
             return createReadonlyItem(
@@ -1421,13 +1635,14 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
     ) {
         List<String> lore = new ArrayList<>();
         lore.add("建造者：" + overlap.ownerName());
+        lore.add("标签：" + BranchDisplayUtil.labelText(overlap.branchLabel()));
         lore.add("状态：" + statusLabel(overlap.status()));
-        lore.add("分支：" + shortId(overlap.branchId()));
+        lore.add("分支：" + BranchDisplayUtil.displayName(overlap.branchId(), overlap.branchLabel()));
         lore.add("重叠方块：" + overlap.overlapBlockCount());
         lore.add("占本次选区：" + formatPercent((double) overlap.overlapBlockCount() / (double) preview.totalBlockCount()));
         lore.add("重叠范围：" + formatBounds(overlap.overlapBounds()));
         lore.add("对方编辑区：" + formatBounds(overlap.branchBounds()));
-        return createReadonlyItem(Material.ORANGE_STAINED_GLASS_PANE, "重叠区域 " + shortId(overlap.branchId()), lore);
+        return createReadonlyItem(Material.ORANGE_STAINED_GLASS_PANE, "重叠区域 " + BranchDisplayUtil.displayName(overlap.branchId(), overlap.branchLabel()), lore);
     }
 
     private ItemStack createReturnMainWorldItem(Player player) {
@@ -1461,6 +1676,7 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
                         "坐标支持：整数、~、~+5、~-3",
                         "1.1.0 起同一区域可并发创建分支，不再排队",
                         "分支卡片左键进入详情页，再执行 Fetch / Rebase / 提审 / 合并",
+                        "左下第三格望远镜：查看全部分支并预览未合并分支",
                         "左下第二格纸张：查看你的合并记录",
                         "审核通过后若想继续改，用 /wg forceedit"
                 )
@@ -1481,25 +1697,66 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
         );
     }
 
+    private ItemStack createAllBranchesEntryItem(List<Branch> allBranches) {
+        long editableBranchCount = allBranches.stream()
+                .filter(this::isOverviewTeleportable)
+                .count();
+        return createActionItem(
+                Material.SPYGLASS,
+                "查看全部分支",
+                ACTION_OPEN_ALL_BRANCHES,
+                null,
+                List.of(
+                        "当前分支总数：" + allBranches.size(),
+                        "未合并分支：" + editableBranchCount,
+                        "左键：打开现有全部分支列表",
+                        "可传送预览每个未合并分支"
+                )
+        );
+    }
+
     private ItemStack createFetchItem(Player player, Branch branch) {
         BranchManager.FetchPreview preview = branchManager.previewFetch(player, branch);
         boolean editable = branch.status() == BranchStatus.ACTIVE || branch.status() == BranchStatus.REJECTED;
         List<String> lore = new ArrayList<>();
-        lore.add("作用：更新分支复制范围内、但不在编辑核心区内的主线方块");
+        lore.add("作用：拉取主线最新状态，不直接改动分支方块");
         if (preview.protectedBounds() != null) {
             lore.add("保护编辑区：" + formatBounds(preview.protectedBounds()));
         }
         if (preview.branchBounds() != null) {
-            lore.add("同步外围：" + formatBounds(preview.branchBounds()));
+            lore.add("检查范围：" + formatBounds(preview.branchBounds()));
         }
         if (editable && preview.available()) {
             lore.add("左键：执行 Fetch");
-            lore.add("会保留创建分支时的编辑核心区");
-            lore.add("并刷新分支世界内那圈外围副本");
+            lore.add("不会替换外围或编辑区方块");
+            lore.add("外围与编辑区会在 Rebase 时一起同步");
             return createActionItem(Material.HOPPER, "执行 Fetch", ACTION_BRANCH_FETCH, branch.id(), lore);
         }
         lore.add(editable ? preview.message() : "只有编辑中的分支才能执行 Fetch");
         return createActionItem(Material.GRAY_DYE, "执行 Fetch", ACTION_BRANCH_FETCH, branch.id(), lore);
+    }
+
+    private ItemStack createBranchLabelEditItem(Player player, Branch branch) {
+        if (!branchManager.isOwner(branch, player)) {
+            return createReadonlyItem(
+                    Material.GRAY_DYE,
+                    "分支标签",
+                    List.of(
+                            "当前标签：" + branchLabelText(branch),
+                            "只有创建者可以修改分支标签"
+                    )
+            );
+        }
+        return createActionItem(
+                BranchDisplayUtil.hasLabel(branch.label()) ? Material.NAME_TAG : Material.OAK_SIGN,
+                "分支标签",
+                ACTION_BRANCH_EDIT_LABEL,
+                branch.id(),
+                List.of(
+                        "当前标签：" + branchLabelText(branch),
+                        "左键：用告示牌修改标签"
+                )
+        );
     }
 
     private ItemStack createCreateOrQueueItem(Player player) {
@@ -1560,9 +1817,21 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
         }
         Branch branch = latestNoteBranch.get();
         List<String> lore = new ArrayList<>();
-        lore.add("分支：" + shortId(branch.id()) + " | 状态：" + statusLabel(branch.status()));
+        lore.add("分支：" + branchDisplayName(branch) + " | 状态：" + statusLabel(branch.status()));
         lore.addAll(wrapLine(branch.reviewNote(), 20));
         return createReadonlyItem(Material.WRITABLE_BOOK, "管理员留言", lore);
+    }
+
+    private ItemStack createCurrentReviewItem(Branch branch) {
+        List<String> lore = new ArrayList<>();
+        lore.add("所有者：" + branch.ownerName());
+        lore.add("标签：" + branchLabelText(branch));
+        lore.add("状态：" + statusLabel(branch.status()));
+        lore.add("区域：(" + branch.minX() + ", " + branch.minY() + ", " + branch.minZ()
+                + ") -> (" + branch.maxX() + ", " + branch.maxY() + ", " + branch.maxZ() + ")");
+        lore.add("左键：打开当前审核分支面板");
+        lore.add("面板里可查看改动摘要并切换高亮");
+        return createActionItem(Material.ENDER_CHEST, "当前审核分支 " + branchDisplayName(branch), ACTION_CURRENT_REVIEW, branch.id(), lore);
     }
 
     private void populateBranchSection(Inventory inventory, int startSlot, int endSlot, List<Branch> branches, String emptyMessage) {
@@ -1601,6 +1870,8 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
     private ItemStack createBranchItem(Branch branch) {
         BranchSyncInfo syncInfo = branchManager.getSyncInfo(branch);
         List<String> lore = new ArrayList<>();
+        lore.add("所有者：" + branch.ownerName());
+        lore.add("标签：" + branchLabelText(branch));
         lore.add("状态：" + statusLabel(branch.status()));
         lore.add("同步：" + syncStateLabel(syncInfo.syncState()));
         lore.add("base/head：" + syncInfo.baseRevision() + " / " + branchManager.currentHeadRevision(branch.mainWorld()));
@@ -1617,7 +1888,44 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
             lore.add("管理员留言：");
             lore.addAll(wrapLine(branch.reviewNote(), 20));
         }
-        return createActionItem(materialFor(branch.status()), "分支 " + shortId(branch.id()), ACTION_OPEN_BRANCH_DETAIL, branch.id(), lore);
+        return createActionItem(materialFor(branch.status()), "分支 " + branchDisplayName(branch), ACTION_OPEN_BRANCH_DETAIL, branch.id(), lore);
+    }
+
+    private ItemStack createAllBranchOverviewItem(Player player, Branch branch) {
+        List<String> lore = new ArrayList<>();
+        lore.add("所有者：" + branch.ownerName());
+        lore.add("标签：" + branchLabelText(branch));
+        lore.add("状态：" + statusLabel(branch.status()));
+        lore.add("世界：" + branch.worldName());
+        lore.add("区域：(" + branch.minX() + ", " + branch.minY() + ", " + branch.minZ()
+                + ") -> (" + branch.maxX() + ", " + branch.maxY() + ", " + branch.maxZ() + ")");
+        lore.add("创建时间：" + TIME_FORMATTER.format(branch.createdAt().atZone(ZoneId.systemDefault())));
+        if (isOverviewTeleportable(branch)) {
+            if (branchManager.canModifyBranch(player, branch)) {
+                lore.add("左键：传送到该未合并分支");
+            } else {
+                lore.add("左键：进入该未合并分支的只读预览");
+            }
+            return createActionItem(
+                    materialFor(branch.status()),
+                    "分支 " + branchDisplayName(branch),
+                    ACTION_ALL_BRANCHES_TELEPORT,
+                    branch.id(),
+                    lore
+            );
+        }
+        lore.add("该分支已合并或关闭，仅供查看信息");
+        return createReadonlyItem(materialFor(branch.status()), "分支 " + branchDisplayName(branch), lore);
+    }
+
+    private Branch resolveCurrentReviewBranch(Player player) {
+        if (player == null || !player.hasPermission("worldgit.admin.review") || player.getWorld() == null) {
+            return null;
+        }
+        return branchManager.findByWorld(player.getWorld().getName())
+                .filter(branch -> branch.status() == BranchStatus.SUBMITTED)
+                .filter(branch -> branchManager.canAccessBranch(player, branch))
+                .orElse(null);
     }
 
     private ItemStack createQueueItem(QueueEntry entry) {
@@ -1633,17 +1941,19 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
 
     private ItemStack createBranchDetailItem(Branch branch) {
         List<String> lore = new ArrayList<>();
+        lore.add("标签：" + branchLabelText(branch));
         lore.add("状态：" + statusLabel(branch.status()));
         lore.add("世界：" + branch.worldName());
         if (branch.reviewNote() != null && !branch.reviewNote().isBlank()) {
             lore.add("管理员留言：");
             lore.addAll(wrapLine(branch.reviewNote(), 20));
         }
-        return createReadonlyItem(Material.PAPER, "目标分支 " + shortId(branch.id()), lore);
+        return createReadonlyItem(Material.PAPER, "目标分支 " + branchDisplayName(branch), lore);
     }
 
     private ItemStack createMergeSelectionItem(Branch branch) {
         List<String> lore = new ArrayList<>();
+        lore.add("标签：" + branchLabelText(branch));
         lore.add("状态：" + statusLabel(branch.status()));
         lore.add("世界：" + branch.worldName());
         lore.add("创建时间：" + TIME_FORMATTER.format(branch.createdAt().atZone(ZoneId.systemDefault())));
@@ -1652,22 +1962,22 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
             lore.add("管理员留言：");
             lore.addAll(wrapLine(branch.reviewNote(), 20));
         }
-        return createActionItem(Material.EMERALD_BLOCK, "待合并分支 " + shortId(branch.id()), null, branch.id(), lore);
+        return createActionItem(Material.EMERALD_BLOCK, "待合并分支 " + branchDisplayName(branch), null, branch.id(), lore);
     }
 
     private ItemStack createMergeHistoryItem(Branch branch) {
         List<String> lore = new ArrayList<>();
-        lore.add("分支：" + shortId(branch.id()));
+        lore.add("分支：" + branchDisplayName(branch));
         lore.add("合并时间：" + formatInstant(branch.mergedAt()));
         lore.add("建造者：" + joinAndTrim(branchManager.listBuilderNames(branch)));
         lore.add("合并说明：" + normalizeDisplay(branch.mergeMessage(), "未填写合并说明"));
         lore.add("左键：查看详情并选择是否传送");
-        return createActionItem(Material.PAPER, "合并记录 " + shortId(branch.id()), ACTION_VIEW_MERGE_RECORD, branch.id(), lore);
+        return createActionItem(Material.PAPER, "合并记录 " + branchDisplayName(branch), ACTION_VIEW_MERGE_RECORD, branch.id(), lore);
     }
 
     private ItemStack createMergeHistoryDetailItem(Branch branch) {
         List<String> lore = new ArrayList<>();
-        lore.add("分支：" + shortId(branch.id()));
+        lore.add("分支：" + branchDisplayName(branch));
         lore.add("世界：" + branch.worldName());
         lore.add("建造者：");
         lore.addAll(wrapLine(joinAndTrim(branchManager.listBuilderNames(branch)), 20));
@@ -1974,6 +2284,35 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
         player.openSign(sign, Side.FRONT);
     }
 
+    private void openBranchLabelInput(Player player, BranchLabelInputTarget target, String branchId, String currentLabel) {
+        Location base = createTemporarySignLocation(player);
+        Block block = base.getBlock();
+        BlockData previousBlockData = block.getBlockData().clone();
+        block.setType(Material.OAK_SIGN, false);
+
+        if (!(block.getState() instanceof Sign sign)) {
+            block.setBlockData(previousBlockData, false);
+            throw new IllegalStateException("无法创建告示牌输入框，请站在更开阔的位置重试。");
+        }
+
+        sign.getSide(Side.FRONT).line(0, Component.text(BRANCH_LABEL_SIGN_HINT));
+        sign.getSide(Side.FRONT).line(1, Component.text(BranchDisplayUtil.hasLabel(currentLabel) ? currentLabel : ""));
+        sign.getSide(Side.FRONT).line(2, Component.empty());
+        sign.getSide(Side.FRONT).line(3, Component.empty());
+        sign.setWaxed(false);
+        sign.setAllowedEditorUniqueId(player.getUniqueId());
+        sign.update(true, false);
+
+        pendingBranchLabelInputs.put(player.getUniqueId(), new PendingBranchLabelInput(
+                target,
+                branchId,
+                base,
+                previousBlockData
+        ));
+        sendBranchLabelGuide(player, currentLabel);
+        player.openSign(sign, Side.FRONT);
+    }
+
     private void openMergeMessageInput(Player player, Branch branch) {
         Location base = createTemporarySignLocation(player);
         Block block = base.getBlock();
@@ -2003,6 +2342,10 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
     }
 
     private void restoreTemporarySign(PendingSelectionInput pending) {
+        restoreTemporarySign(pending.location(), pending.previousBlockData());
+    }
+
+    private void restoreTemporarySign(PendingBranchLabelInput pending) {
         restoreTemporarySign(pending.location(), pending.previousBlockData());
     }
 
@@ -2105,6 +2448,21 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
         return String.join(" ", lines).trim();
     }
 
+    private String resolveBranchLabel(SignChangeEvent event) {
+        List<String> lines = new ArrayList<>();
+        for (int index = 0; index < 4; index++) {
+            String line = normalizeSignLine(event.getLine(index));
+            if (line.isEmpty()) {
+                continue;
+            }
+            if (index == 0 && BRANCH_LABEL_SIGN_HINT.equals(line)) {
+                continue;
+            }
+            lines.add(line);
+        }
+        return String.join(" ", lines).trim();
+    }
+
     private String normalizeSignLine(String raw) {
         return raw == null ? "" : raw.trim();
     }
@@ -2124,6 +2482,30 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
         MessageUtil.sendInfo(player, "请在告示牌中输入本次合并说明。");
         MessageUtil.sendInfo(player, "第 1 到第 4 行都可以填写，多行会自动合并成一条记录。");
         MessageUtil.sendInfo(player, "如果留空，合并记录里会显示为：未填写合并说明。");
+    }
+
+    private void sendBranchLabelGuide(Player player, String currentLabel) {
+        MessageUtil.sendInfo(player, "请在告示牌中输入分支标签。");
+        MessageUtil.sendInfo(player, "当前标签：" + BranchDisplayUtil.labelText(currentLabel));
+        MessageUtil.sendInfo(player, "最多 " + BranchDisplayUtil.MAX_LABEL_LENGTH + " 个字符，多行会自动合并为一行。");
+        MessageUtil.sendInfo(player, "如果留空，本次修改会直接取消。");
+    }
+
+    private void reopenBranchLabelSourceMenu(Player player, PendingBranchLabelInput pending) {
+        if (pending.target() == BranchLabelInputTarget.CREATE_CONFIRM) {
+            PendingCreateState state = pendingCreateStates.get(player.getUniqueId());
+            if (state != null) {
+                openCreateConfirmMenu(player, state);
+                return;
+            }
+            openMainMenu(player);
+            return;
+        }
+        if (pending.branchId() == null || pending.branchId().isBlank()) {
+            openMainMenu(player);
+            return;
+        }
+        openBranchDetailMenu(player, branchManager.requireBranch(pending.branchId()));
     }
 
     private void refreshMenuBooks() {
@@ -2173,6 +2555,12 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
                 .toList();
     }
 
+    private List<Branch> sortedEditableBranches(Player player) {
+        return branchManager.listEditableBranches(player).stream()
+                .sorted(Comparator.comparing(Branch::createdAt).reversed())
+                .toList();
+    }
+
     private boolean isInMainWorld(Player player) {
         return player.getWorld() != null
                 && plugin.pluginConfig().mainWorld().equals(player.getWorld().getName());
@@ -2183,14 +2571,41 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
         for (int slot = 28; slot <= 44; slot++) {
             slots.add(slot);
         }
-        for (int slot = 47; slot <= (withReviewButton ? 52 : 53); slot++) {
+        for (int slot = 48; slot <= (withReviewButton ? 52 : 53); slot++) {
             slots.add(slot);
         }
         return slots.stream().mapToInt(Integer::intValue).toArray();
     }
 
+    private List<Branch> sortedAllBranches() {
+        return branchManager.listAllBranches().stream()
+                .sorted(Comparator.comparingInt((Branch branch) -> branchOverviewOrder(branch.status()))
+                        .thenComparing(Branch::createdAt, Comparator.reverseOrder()))
+                .toList();
+    }
+
+    private int branchOverviewOrder(BranchStatus status) {
+        return switch (status) {
+            case ACTIVE, REJECTED, SUBMITTED, APPROVED -> 0;
+            case MERGED -> 1;
+            case ABANDONED -> 2;
+        };
+    }
+
+    private boolean isOverviewTeleportable(Branch branch) {
+        return branch.status() != BranchStatus.MERGED && branch.status() != BranchStatus.ABANDONED;
+    }
+
     private String shortId(String branchId) {
-        return branchId.substring(0, Math.min(8, branchId.length()));
+        return BranchDisplayUtil.shortId(branchId);
+    }
+
+    private String branchDisplayName(Branch branch) {
+        return BranchDisplayUtil.displayName(branch);
+    }
+
+    private String branchLabelText(Branch branch) {
+        return BranchDisplayUtil.labelText(branch);
     }
 
     private String statusLabel(BranchStatus status) {
@@ -2377,6 +2792,35 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
         }
     }
 
+    private static final class AllBranchesMenuHolder implements InventoryHolder {
+        private final int page;
+        private final int totalPages;
+        private Inventory inventory;
+
+        private AllBranchesMenuHolder(int page, int totalPages) {
+            this.page = page;
+            this.totalPages = totalPages;
+        }
+
+        public void setInventory(Inventory inventory) {
+            this.inventory = inventory;
+        }
+
+        @Override
+        public Inventory getInventory() {
+            return inventory;
+        }
+
+        public int page() {
+            return page;
+        }
+
+        @SuppressWarnings("unused")
+        public int totalPages() {
+            return totalPages;
+        }
+    }
+
     private static final class BranchDetailHolder implements InventoryHolder {
         private final String branchId;
         private Inventory inventory;
@@ -2530,6 +2974,28 @@ public final class PlayerMenuManager implements Listener, PlayerMenuService {
             Location location,
             BlockData previousBlockData,
             Location anchor
+    ) {
+    }
+
+    private enum BranchLabelInputTarget {
+        CREATE_CONFIRM,
+        BRANCH_DETAIL
+    }
+
+    private record PendingCreateState(
+            BranchManager.CreateBranchPreview preview,
+            String label
+    ) {
+        private PendingCreateState withLabel(String newLabel) {
+            return new PendingCreateState(preview, newLabel);
+        }
+    }
+
+    private record PendingBranchLabelInput(
+            BranchLabelInputTarget target,
+            String branchId,
+            Location location,
+            BlockData previousBlockData
     ) {
     }
 
