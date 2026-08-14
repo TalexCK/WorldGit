@@ -11,6 +11,7 @@ public final class PluginConfig {
     private final int maxRegionSizeX;
     private final int maxRegionSizeZ;
     private final boolean useFullHeight;
+    private final boolean forceEnablePlayerTeleportCommand;
     private final int maxActiveBranches;
     private final int maxQueueEntries;
     private final boolean backupEnabled;
@@ -35,6 +36,20 @@ public final class PluginConfig {
     private final int webRecentLimit;
     private final String webBlueMapUrl;
     private final String webPointCloudUrl;
+    private final boolean aiEnabled;
+    private final String aiProvider;
+    private final String aiModel;
+    private final String aiBaseUrl;
+    private final String aiApiKey;
+    private final String aiOpenAiMode;
+    private final int aiRequestTimeoutSeconds;
+    private final int aiMaxToolRounds;
+    private final int aiMaxBoxBlocks;
+    private final int aiMaxTotalBlockChanges;
+    private final int aiMaxPromptCharacters;
+    private final int aiMaxImageBytes;
+    private final int aiSessionTtlMinutes;
+    private final int aiAuditPayloadMaxLength;
 
     private PluginConfig(
             String displayPrefix,
@@ -42,6 +57,7 @@ public final class PluginConfig {
             int maxRegionSizeX,
             int maxRegionSizeZ,
             boolean useFullHeight,
+            boolean forceEnablePlayerTeleportCommand,
             int maxActiveBranches,
             int maxQueueEntries,
             boolean backupEnabled,
@@ -65,13 +81,28 @@ public final class PluginConfig {
             String webStaticDirectory,
             int webRecentLimit,
             String webBlueMapUrl,
-            String webPointCloudUrl
+            String webPointCloudUrl,
+            boolean aiEnabled,
+            String aiProvider,
+            String aiModel,
+            String aiBaseUrl,
+            String aiApiKey,
+            String aiOpenAiMode,
+            int aiRequestTimeoutSeconds,
+            int aiMaxToolRounds,
+            int aiMaxBoxBlocks,
+            int aiMaxTotalBlockChanges,
+            int aiMaxPromptCharacters,
+            int aiMaxImageBytes,
+            int aiSessionTtlMinutes,
+            int aiAuditPayloadMaxLength
     ) {
         this.displayPrefix = displayPrefix;
         this.mainWorld = mainWorld;
         this.maxRegionSizeX = maxRegionSizeX;
         this.maxRegionSizeZ = maxRegionSizeZ;
         this.useFullHeight = useFullHeight;
+        this.forceEnablePlayerTeleportCommand = forceEnablePlayerTeleportCommand;
         this.maxActiveBranches = maxActiveBranches;
         this.maxQueueEntries = maxQueueEntries;
         this.backupEnabled = backupEnabled;
@@ -96,6 +127,20 @@ public final class PluginConfig {
         this.webRecentLimit = webRecentLimit;
         this.webBlueMapUrl = webBlueMapUrl;
         this.webPointCloudUrl = webPointCloudUrl;
+        this.aiEnabled = aiEnabled;
+        this.aiProvider = aiProvider;
+        this.aiModel = aiModel;
+        this.aiBaseUrl = aiBaseUrl;
+        this.aiApiKey = aiApiKey;
+        this.aiOpenAiMode = aiOpenAiMode;
+        this.aiRequestTimeoutSeconds = aiRequestTimeoutSeconds;
+        this.aiMaxToolRounds = aiMaxToolRounds;
+        this.aiMaxBoxBlocks = aiMaxBoxBlocks;
+        this.aiMaxTotalBlockChanges = aiMaxTotalBlockChanges;
+        this.aiMaxPromptCharacters = aiMaxPromptCharacters;
+        this.aiMaxImageBytes = aiMaxImageBytes;
+        this.aiSessionTtlMinutes = aiSessionTtlMinutes;
+        this.aiAuditPayloadMaxLength = aiAuditPayloadMaxLength;
     }
 
     public static PluginConfig load(JavaPlugin plugin) {
@@ -106,6 +151,7 @@ public final class PluginConfig {
                 Math.max(1, config.getInt("max-region-size-x", 50)),
                 Math.max(1, config.getInt("max-region-size-z", 50)),
                 config.getBoolean("use-full-height", false),
+                config.getBoolean("teleport-command.force-enable-for-players", true),
                 Math.max(1, config.getInt("max-active-branches", 2)),
                 Math.max(1, config.getInt("max-queue-entries", 1)),
                 config.getBoolean("backup.enabled", true),
@@ -129,7 +175,24 @@ public final class PluginConfig {
                 normalizeDirectory(config.getString("web.static-directory", "web"), "web"),
                 Math.max(1, config.getInt("web.recent-limit", 20)),
                 normalizeOptional(config.getString("web.bluemap-url", "")),
-                normalizeOptional(config.getString("web.pointcloud-url", ""))
+                normalizeOptional(config.getString("web.pointcloud-url", "")),
+                config.getBoolean("ai.enabled", true),
+                normalizeEnum(config.getString("ai.provider", "openai"), "openai", "openai", "anthropic"),
+                normalizeDirectory(config.getString("ai.model", "gpt-4.1-mini"), "gpt-4.1-mini"),
+                normalizeAiBaseUrl(
+                        config.getString("ai.base-url", ""),
+                        config.getString("ai.provider", "openai")
+                ),
+                normalizeOptional(config.getString("ai.api-key", "")),
+                normalizeEnum(config.getString("ai.openai-mode", "responses"), "responses", "responses", "completion"),
+                Math.max(10, config.getInt("ai.request-timeout-seconds", 120)),
+                Math.max(1, config.getInt("ai.max-tool-rounds", 12)),
+                Math.max(1, config.getInt("ai.max-box-blocks", 512)),
+                Math.max(1, config.getInt("ai.max-total-block-changes", 4096)),
+                Math.max(1, config.getInt("ai.max-prompt-characters", 8000)),
+                Math.max(1024, config.getInt("ai.max-image-bytes", 5 * 1024 * 1024)),
+                Math.max(5, config.getInt("ai.session-ttl-minutes", 120)),
+                Math.max(256, config.getInt("ai.audit-payload-max-length", 2000))
         );
     }
 
@@ -168,6 +231,30 @@ public final class PluginConfig {
         return value.trim();
     }
 
+    private static String normalizeEnum(String value, String fallback, String... allowedValues) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        String normalized = value.trim().toLowerCase();
+        for (String allowedValue : allowedValues) {
+            if (allowedValue.equalsIgnoreCase(normalized)) {
+                return allowedValue.toLowerCase();
+            }
+        }
+        return fallback;
+    }
+
+    private static String normalizeAiBaseUrl(String value, String providerValue) {
+        if (value != null && !value.isBlank()) {
+            return value.trim();
+        }
+        String provider = providerValue == null ? "openai" : providerValue.trim().toLowerCase();
+        if ("anthropic".equals(provider)) {
+            return "https://api.anthropic.com/v1";
+        }
+        return "https://api.openai.com/v1";
+    }
+
     public String displayPrefix() {
         return displayPrefix;
     }
@@ -190,6 +277,10 @@ public final class PluginConfig {
 
     public int maxActiveBranches() {
         return maxActiveBranches;
+    }
+
+    public boolean forceEnablePlayerTeleportCommand() {
+        return forceEnablePlayerTeleportCommand;
     }
 
     public int maxQueueEntries() {
@@ -311,5 +402,65 @@ public final class PluginConfig {
 
     public String webPointCloudUrl() {
         return webPointCloudUrl;
+    }
+
+    public boolean aiEnabled() {
+        return aiEnabled;
+    }
+
+    public String aiProvider() {
+        return aiProvider;
+    }
+
+    public String aiModel() {
+        return aiModel;
+    }
+
+    public String aiBaseUrl() {
+        return aiBaseUrl;
+    }
+
+    public String aiApiKey() {
+        return aiApiKey;
+    }
+
+    public boolean aiConfigured() {
+        return aiEnabled && !aiApiKey.isBlank();
+    }
+
+    public String aiOpenAiMode() {
+        return aiOpenAiMode;
+    }
+
+    public int aiRequestTimeoutSeconds() {
+        return aiRequestTimeoutSeconds;
+    }
+
+    public int aiMaxToolRounds() {
+        return aiMaxToolRounds;
+    }
+
+    public int aiMaxBoxBlocks() {
+        return aiMaxBoxBlocks;
+    }
+
+    public int aiMaxTotalBlockChanges() {
+        return aiMaxTotalBlockChanges;
+    }
+
+    public int aiMaxPromptCharacters() {
+        return aiMaxPromptCharacters;
+    }
+
+    public int aiMaxImageBytes() {
+        return aiMaxImageBytes;
+    }
+
+    public int aiSessionTtlMinutes() {
+        return aiSessionTtlMinutes;
+    }
+
+    public int aiAuditPayloadMaxLength() {
+        return aiAuditPayloadMaxLength;
     }
 }

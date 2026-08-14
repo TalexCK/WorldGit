@@ -14,6 +14,12 @@ commands:
   wg:
     description: 协作建造分支管理命令
     usage: /wg
+  ai:
+    description: WorldGit AI 命令
+    usage: /ai
+  secret:
+    description: 生成 WorldGit Web 登录 Secret
+    usage: /secret
 permissions:
   worldgit.branch.create:
     default: true
@@ -57,3 +63,5 @@ permissions:
     default: op
   worldgit.admin.bypass:
     default: op
+  worldgit.ai.use:
+    default: false

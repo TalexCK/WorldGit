@@ -3,6 +3,10 @@ main-world: "world"
 max-region-size-x: 50
 max-region-size-z: 50
 use-full-height: false
+teleport-command:
+  # 为普通玩家兜底启用 /tp，仅支持“传送自己到坐标”或“传送自己到在线玩家”。
+  # 当玩家本来就拥有原生 /tp 权限时，不会拦截服务器已有行为。
+  force-enable-for-players: true
 max-active-branches: 2
 max-queue-entries: 1
 
@@ -43,3 +47,30 @@ web:
   # 点云参考页面地址。可填完整 URL，如 "http://127.0.0.1:9620/"，
   # 也可填反向代理后的路径，如 "/pointcloud/"。
   pointcloud-url: ""
+
+ai:
+  enabled: true
+  # 可选值: openai / anthropic
+  provider: "openai"
+  # 由服务端固定控制；网页端只展示，不允许前端随意覆盖。
+  model: "gpt-4.1-mini"
+  # OpenAI 风格示例: https://api.openai.com/v1
+  # Anthropic 风格示例: https://api.anthropic.com/v1
+  base-url: "https://api.openai.com/v1"
+  # API Key 仅保存在服务端配置中，绝不要放到前端页面。
+  api-key: ""
+  openai-mode: "responses"
+  request-timeout-seconds: 120
+  max-tool-rounds: 12
+  # 范围类工具单次最大体积，超出则拒绝，避免一次改太大区域。
+  max-box-blocks: 512
+  # 单次 AI 会话内最大总改块数。超过后停止继续施工。
+  max-total-block-changes: 4096
+  # 限制网页 prompt 大小，防止异常大请求。
+  max-prompt-characters: 8000
+  # 允许上传的单张图片最大字节数。
+  max-image-bytes: 5242880
+  # Secret 登录成功后的会话有效期（分钟）。
+  session-ttl-minutes: 120
+  # 审计日志中单条 payload 的最大保存长度，避免数据库爆涨。
+  audit-payload-max-length: 2000

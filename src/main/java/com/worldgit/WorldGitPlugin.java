@@ -1,9 +1,12 @@
 package com.worldgit;
 
+import com.worldgit.ai.WorldGitAiService;
+import com.worldgit.command.AiCommand;
 import com.worldgit.command.AdminCommands;
 import com.worldgit.command.BranchCommands;
 import com.worldgit.command.InviteCommands;
 import com.worldgit.command.ReviewCommands;
+import com.worldgit.command.SecretCommand;
 import com.worldgit.command.WorldGitCommand;
 import com.worldgit.config.PluginConfig;
 import com.worldgit.database.BranchRepository;
@@ -12,12 +15,18 @@ import com.worldgit.database.DatabaseManager;
 import com.worldgit.database.LockRepository;
 import com.worldgit.database.QueueRepository;
 import com.worldgit.database.RevisionRepository;
+import com.worldgit.database.AiAuditRepository;
+import com.worldgit.database.AiPreviewSessionRepository;
+import com.worldgit.database.PlayerAiSecretRepository;
+import com.worldgit.database.RealshotRepository;
+import com.worldgit.listener.AiPreviewListener;
 import com.worldgit.generator.VoidChunkGenerator;
 import com.worldgit.listener.BranchWorldListener;
 import com.worldgit.listener.BranchEditProtectionListener;
 import com.worldgit.listener.MainWorldEnforcementListener;
 import com.worldgit.listener.MainWorldProtectionListener;
 import com.worldgit.listener.PlayerConnectionListener;
+import com.worldgit.listener.PlayerTeleportCommandListener;
 import com.worldgit.listener.PlayerStateListener;
 import com.worldgit.manager.AxiomProtectionHook;
 import com.worldgit.manager.BackupManager;
@@ -47,6 +56,7 @@ import com.worldgit.util.MessageUtil;
 import com.worldgit.util.PlayerMenuManager;
 import com.worldgit.util.ReviewMenuManager;
 import com.worldgit.web.PluginWebServer;
+import com.worldgit.web.WebLoginRequestService;
 import java.io.IOException;
 import java.sql.SQLException;
 import java.util.Objects;
@@ -92,6 +102,8 @@ public final class WorldGitPlugin extends JavaPlugin {
     private PlayerStateManager playerStateManager;
     private ReviewMenuManager reviewMenuManager;
     private PlayerMenuManager playerMenuManager;
+    private WorldGitAiService aiService;
+    private WebLoginRequestService webLoginRequestService;
     private PluginWebServer webServer;
 
     @Override
@@ -127,6 +139,9 @@ public final class WorldGitPlugin extends JavaPlugin {
         }
         if (playerStateManager != null) {
             playerStateManager.stop();
+        }
+        if (aiService != null) {
+            aiService.stop();
         }
         if (webServer != null) {
             webServer.stop();
@@ -164,6 +179,9 @@ public final class WorldGitPlugin extends JavaPlugin {
         }
         if (playerStateManager != null) {
             playerStateManager.stop();
+        }
+        if (aiService != null) {
+            aiService.stop();
         }
         if (webServer != null) {
             webServer.stop();
@@ -238,6 +256,18 @@ public final class WorldGitPlugin extends JavaPlugin {
         playerMenuManager = new PlayerMenuManager(this, branchManager, conflictToolManager, reviewMenuManager);
         reviewMenuManager.setPlayerMenuService(playerMenuManager);
         playerStateManager = new PlayerStateManager(this, pluginConfig, worldManager, branchManager, selectionManager);
+        aiService = new WorldGitAiService(
+                this,
+                pluginConfig,
+                branchManager,
+                worldManager,
+                protectionManager,
+                new PlayerAiSecretRepository(databaseManager),
+                new AiAuditRepository(databaseManager),
+                new AiPreviewSessionRepository(databaseManager)
+        );
+        aiService.start();
+        webLoginRequestService = new WebLoginRequestService(aiService);
 
         registerCommands();
         registerListeners();
@@ -254,7 +284,15 @@ public final class WorldGitPlugin extends JavaPlugin {
         rebaseManager.recoverIncompleteRebases();
         mergeManager.recoverIncompleteMerges();
         mergeStatManager.backfillMissingMergedBranchStats();
-        webServer = new PluginWebServer(this, pluginConfig, branchRepository);
+        webServer = new PluginWebServer(
+                this,
+                pluginConfig,
+                branchRepository,
+                branchManager,
+                new RealshotRepository(databaseManager),
+                aiService,
+                webLoginRequestService
+        );
         webServer.start();
     }
 
@@ -269,6 +307,14 @@ public final class WorldGitPlugin extends JavaPlugin {
         );
         command.setExecutor(executor);
         command.setTabCompleter(executor);
+
+        PluginCommand aiCommand = Objects.requireNonNull(getCommand("ai"), "未注册 ai 命令");
+        AiCommand aiExecutor = new AiCommand(aiService);
+        aiCommand.setExecutor(aiExecutor);
+        aiCommand.setTabCompleter(aiExecutor);
+
+        PluginCommand secretCommand = Objects.requireNonNull(getCommand("secret"), "未注册 secret 命令");
+        secretCommand.setExecutor(new SecretCommand(aiService, pluginConfig, webLoginRequestService));
     }
 
     private void applyMainWorldSettings() {
@@ -332,6 +378,10 @@ public final class WorldGitPlugin extends JavaPlugin {
                 this
         );
         getServer().getPluginManager().registerEvents(
+                new PlayerTeleportCommandListener(pluginConfig),
+                this
+        );
+        getServer().getPluginManager().registerEvents(
                 new PlayerStateListener(playerStateManager),
                 this
         );
@@ -345,6 +395,10 @@ public final class WorldGitPlugin extends JavaPlugin {
         );
         getServer().getPluginManager().registerEvents(
                 playerMenuManager,
+                this
+        );
+        getServer().getPluginManager().registerEvents(
+                new AiPreviewListener(aiService),
                 this
         );
     }

@@ -27,7 +27,7 @@ import java.util.stream.Collectors;
  */
 public final class DatabaseManager implements Closeable {
 
-    private static final int SCHEMA_VERSION = 6;
+    private static final int SCHEMA_VERSION = 9;
 
     private final Path databaseFile;
     private final String jdbcUrl;
@@ -641,6 +641,89 @@ public final class DatabaseManager implements Closeable {
                 )),
                 new Migration(6, List.of(
                         "ALTER TABLE branches ADD COLUMN branch_label TEXT"
+                )),
+                new Migration(7, List.of(
+                        """
+                        CREATE TABLE IF NOT EXISTS player_ai_secrets (
+                            player_uuid TEXT PRIMARY KEY,
+                            player_name TEXT NOT NULL,
+                            secret_hash TEXT NOT NULL,
+                            secret_salt TEXT NOT NULL,
+                            hash_iterations INTEGER NOT NULL,
+                            created_at INTEGER NOT NULL,
+                            rotated_at INTEGER NOT NULL,
+                            last_used_at INTEGER
+                        )
+                        """,
+                        """
+                        CREATE TABLE IF NOT EXISTS ai_audit_logs (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            session_id TEXT NOT NULL,
+                            player_uuid TEXT NOT NULL,
+                            branch_id TEXT,
+                            provider TEXT NOT NULL,
+                            model TEXT NOT NULL,
+                            event_type TEXT NOT NULL,
+                            payload TEXT NOT NULL,
+                            created_at INTEGER NOT NULL
+                        )
+                        """,
+                        "CREATE INDEX IF NOT EXISTS idx_player_ai_secrets_rotated_at ON player_ai_secrets(rotated_at)",
+                        "CREATE INDEX IF NOT EXISTS idx_ai_audit_logs_session_id ON ai_audit_logs(session_id)",
+                        "CREATE INDEX IF NOT EXISTS idx_ai_audit_logs_player_uuid ON ai_audit_logs(player_uuid)",
+                        "CREATE INDEX IF NOT EXISTS idx_ai_audit_logs_branch_id ON ai_audit_logs(branch_id)",
+                        "CREATE INDEX IF NOT EXISTS idx_ai_audit_logs_created_at ON ai_audit_logs(created_at)"
+                )),
+                new Migration(8, List.of(
+                        """
+                        CREATE TABLE IF NOT EXISTS ai_preview_sessions (
+                            preview_branch_id TEXT PRIMARY KEY REFERENCES branches(id) ON DELETE CASCADE,
+                            source_branch_id TEXT,
+                            player_uuid TEXT NOT NULL,
+                            source_world_name TEXT,
+                            source_x REAL,
+                            source_y REAL,
+                            source_z REAL,
+                            source_yaw REAL,
+                            source_pitch REAL,
+                            created_at INTEGER NOT NULL
+                        )
+                        """,
+                        "CREATE INDEX IF NOT EXISTS idx_ai_preview_sessions_player_uuid ON ai_preview_sessions(player_uuid)",
+                        "CREATE INDEX IF NOT EXISTS idx_ai_preview_sessions_source_branch_id ON ai_preview_sessions(source_branch_id)",
+                        "CREATE INDEX IF NOT EXISTS idx_ai_preview_sessions_created_at ON ai_preview_sessions(created_at)"
+                )),
+                new Migration(9, List.of(
+                        "ALTER TABLE player_ai_secrets ADD COLUMN ai_allowed INTEGER NOT NULL DEFAULT 1",
+                        """
+                        CREATE TABLE IF NOT EXISTS realshot_requests (
+                            id TEXT PRIMARY KEY,
+                            branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+                            requester_uuid TEXT NOT NULL,
+                            requester_name TEXT NOT NULL,
+                            question TEXT NOT NULL,
+                            created_at INTEGER NOT NULL
+                        )
+                        """,
+                        """
+                        CREATE TABLE IF NOT EXISTS realshot_media (
+                            id TEXT PRIMARY KEY,
+                            request_id TEXT NOT NULL REFERENCES realshot_requests(id) ON DELETE CASCADE,
+                            branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+                            uploader_uuid TEXT NOT NULL,
+                            uploader_name TEXT NOT NULL,
+                            file_name TEXT NOT NULL,
+                            mime_type TEXT NOT NULL,
+                            file_path TEXT NOT NULL,
+                            file_size INTEGER NOT NULL,
+                            created_at INTEGER NOT NULL
+                        )
+                        """,
+                        "CREATE INDEX IF NOT EXISTS idx_realshot_requests_branch_id ON realshot_requests(branch_id)",
+                        "CREATE INDEX IF NOT EXISTS idx_realshot_requests_created_at ON realshot_requests(created_at)",
+                        "CREATE INDEX IF NOT EXISTS idx_realshot_media_request_id ON realshot_media(request_id)",
+                        "CREATE INDEX IF NOT EXISTS idx_realshot_media_branch_id ON realshot_media(branch_id)",
+                        "CREATE INDEX IF NOT EXISTS idx_realshot_media_created_at ON realshot_media(created_at)"
                 ))
         );
     }

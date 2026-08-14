@@ -118,7 +118,7 @@ public final class InviteCommands {
     private List<String> completeInvite(CommandSender sender, String[] args) {
         if (args.length == 2) {
             List<String> suggestions = new java.util.ArrayList<>();
-            suggestions.addAll(prefixMatch(new String[]{args[1]}, List.of("accept", "accpet")));
+            suggestions.addAll(prefixMatch(new String[]{args[1]}, List.of("accept")));
             suggestions.addAll(inviteService.suggestTargets(sender, args[1]));
             return suggestions.stream().distinct().toList();
         }
@@ -146,6 +146,6 @@ public final class InviteCommands {
             return false;
         }
         String normalized = value.toLowerCase();
-        return "accept".equals(normalized) || "accpet".equals(normalized);
+        return "accept".equals(normalized);
     }
 }

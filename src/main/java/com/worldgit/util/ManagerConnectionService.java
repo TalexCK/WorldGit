@@ -22,7 +22,7 @@ public final class ManagerConnectionService implements ConnectionService {
             return;
         }
         boolean allowed = branchManager.findByWorld(world.getName())
-                .map(branch -> branchManager.canAccessBranch(player, branch))
+                .map(branch -> branchManager.canPreviewBranch(player, branch))
                 .orElse(false);
         if (!allowed) {
             player.teleportAsync(worldManager.getMainWorld().getSpawnLocation());

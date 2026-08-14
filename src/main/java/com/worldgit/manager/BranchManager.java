@@ -18,6 +18,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -186,8 +187,27 @@ public final class BranchManager {
                 label,
                 selector.getWorld(),
                 selection,
+                selector.getWorld().getName(),
                 teleportTarget,
                 selector.getWorld().getSpawnLocation()
+        );
+    }
+
+    public Branch createAiPreviewBranch(UUID ownerUuid, String ownerName, Branch sourceBranch, String label) {
+        Objects.requireNonNull(sourceBranch, "源分支不能为空");
+        if (!sourceBranch.hasRegion()) {
+            throw new IllegalStateException("源分支没有有效编辑区域");
+        }
+        World sourceWorld = worldManager.createBranchWorld(sourceBranch.worldName());
+        return createBranchFromBounds(
+                ownerUuid,
+                ownerName,
+                normalizeOptionalBranchLabel(label),
+                sourceWorld,
+                editableBounds(sourceBranch),
+                sourceBranch.mainWorld(),
+                null,
+                worldManager.createReturnLocation(sourceBranch.minX(), sourceBranch.maxX(), sourceBranch.minZ(), sourceBranch.maxZ())
         );
     }
 
@@ -285,6 +305,20 @@ public final class BranchManager {
     public List<Branch> listEditableBranches(Player player) {
         return branchRepository.findAll().stream()
                 .filter(branch -> canModifyBranch(player, branch))
+                .toList();
+    }
+
+    public List<Branch> listEditableBranches(UUID playerUuid) {
+        return branchRepository.findAll().stream()
+                .filter(branch -> canModifyBranch(playerUuid, branch))
+                .toList();
+    }
+
+    public List<Branch> listAiEditableBranches(UUID playerUuid) {
+        return branchRepository.findAll().stream()
+                .filter(this::isAiEditableBranch)
+                .filter(branch -> canModifyBranch(playerUuid, branch))
+                .sorted((left, right) -> right.createdAt().compareTo(left.createdAt()))
                 .toList();
     }
 
@@ -484,6 +518,31 @@ public final class BranchManager {
         closeBranch(branch, BranchStatus.ABANDONED, Instant.now().getEpochSecond(), note == null ? "管理员关闭" : note);
     }
 
+    public void forceDeleteBranch(String branchId, String note) {
+        Branch branch = requireBranch(branchId);
+        closeBranch(branch, BranchStatus.ABANDONED, Instant.now().getEpochSecond(), note == null ? "管理员关闭" : note, true);
+        // AI 预览等一次性分支在关闭后不保留历史记录，避免在“最近创建/提交/合并”列表中出现僵尸条目。
+        branchRepository.deleteByIdQuietly(branchId);
+    }
+
+    public int purgeLegacyAbandonedAiPreviews() {
+        int deleted = 0;
+        for (Branch branch : branchRepository.findAll()) {
+            if (branch.status() != BranchStatus.ABANDONED) {
+                continue;
+            }
+            String label = branch.label();
+            if (label == null || !label.startsWith("AI预览 ")) {
+                continue;
+            }
+            worldManager.deleteWorld(branch.worldName(), null);
+            branchRepository.deleteByIdQuietly(branch.id());
+            branchesByWorld.remove(branch.worldName());
+            deleted++;
+        }
+        return deleted;
+    }
+
     public void teleportToBranch(Player player, String branchId) {
         Branch branch = resolveAccessibleBranch(player, branchId);
         teleportToBranchWorld(player, branch);
@@ -509,6 +568,82 @@ public final class BranchManager {
                 branch.minZ(),
                 branch.maxZ()
         ));
+    }
+
+    public int copyEditableRegion(Branch sourceBranch, Branch targetBranch) {
+        Objects.requireNonNull(sourceBranch, "源分支不能为空");
+        Objects.requireNonNull(targetBranch, "目标分支不能为空");
+        if (!sourceBranch.hasRegion() || !targetBranch.hasRegion()) {
+            throw new IllegalStateException("源分支或目标分支没有有效编辑区域");
+        }
+        RegionCopyManager.SelectionBounds sourceBounds = editableBounds(sourceBranch);
+        RegionCopyManager.SelectionBounds targetBounds = editableBounds(targetBranch);
+        if (!sourceBounds.equals(targetBounds)) {
+            throw new IllegalStateException("源分支与目标分支范围不一致，无法回写");
+        }
+        World sourceWorld = worldManager.createBranchWorld(sourceBranch.worldName());
+        World targetWorld = worldManager.createBranchWorld(targetBranch.worldName());
+        int changedBlocks = regionCopyManager.countRegionDifferencesOutsideExclusion(
+                sourceWorld,
+                targetWorld,
+                targetBounds,
+                null
+        );
+        regionCopyManager.copyRegion(sourceWorld, targetWorld, targetBounds);
+        return changedBlocks;
+    }
+
+    public Location createCorrespondingBranchLocation(Branch sourceBranch, Branch targetBranch, Location referenceLocation) {
+        Objects.requireNonNull(sourceBranch, "源分支不能为空");
+        Objects.requireNonNull(targetBranch, "目标分支不能为空");
+        World targetWorld = worldManager.createBranchWorld(targetBranch.worldName());
+        if (referenceLocation == null
+                || referenceLocation.getWorld() == null
+                || !sourceBranch.worldName().equals(referenceLocation.getWorld().getName())) {
+            return worldManager.createBranchSpawn(
+                    targetWorld,
+                    targetBranch.minX(),
+                    targetBranch.maxX(),
+                    targetBranch.minY(),
+                    targetBranch.maxY(),
+                    targetBranch.minZ(),
+                    targetBranch.maxZ()
+            );
+        }
+
+        World sourceWorld = worldManager.createBranchWorld(sourceBranch.worldName());
+        RegionCopyManager.SelectionBounds copiedBounds = regionCopyManager.expandForCopy(sourceWorld, editableBounds(sourceBranch));
+        int blockX = referenceLocation.getBlockX();
+        int blockY = referenceLocation.getBlockY();
+        int blockZ = referenceLocation.getBlockZ();
+        if (blockX < copiedBounds.minX() || blockX > copiedBounds.maxX()
+                || blockY < copiedBounds.minY() || blockY > copiedBounds.maxY()
+                || blockZ < copiedBounds.minZ() || blockZ > copiedBounds.maxZ()) {
+            return worldManager.createBranchSpawn(
+                    targetWorld,
+                    targetBranch.minX(),
+                    targetBranch.maxX(),
+                    targetBranch.minY(),
+                    targetBranch.maxY(),
+                    targetBranch.minZ(),
+                    targetBranch.maxZ()
+            );
+        }
+
+        double y = Math.max(targetWorld.getMinHeight(), Math.min(referenceLocation.getY(), targetWorld.getMaxHeight() - 1));
+        return new Location(
+                targetWorld,
+                referenceLocation.getX(),
+                y,
+                referenceLocation.getZ(),
+                referenceLocation.getYaw(),
+                referenceLocation.getPitch()
+        );
+    }
+
+    public void teleportToCorrespondingBranch(Player player, Branch sourceBranch, Branch targetBranch, Location referenceLocation) {
+        rememberMainWorldLocation(player);
+        player.teleport(createCorrespondingBranchLocation(sourceBranch, targetBranch, referenceLocation));
     }
 
     public void returnToMainWorld(Player player) {
@@ -598,8 +733,29 @@ public final class BranchManager {
                 || player.hasPermission("worldgit.admin.bypass");
     }
 
+    public boolean canPreviewBranch(Player player, Branch branch) {
+        if (player == null || branch == null) {
+            return false;
+        }
+        return canAccessBranch(player, branch) || isPreviewableBranch(branch);
+    }
+
     public boolean canModifyBranch(Player player, Branch branch) {
-        return isOwner(branch, player) || isInvited(branch, player.getUniqueId());
+        return player != null && canModifyBranch(player.getUniqueId(), branch);
+    }
+
+    public boolean canModifyBranch(UUID playerUuid, Branch branch) {
+        if (playerUuid == null || branch == null) {
+            return false;
+        }
+        return branch.ownerUuid().equals(playerUuid) || isInvited(branch, playerUuid);
+    }
+
+    public boolean isAiEditableBranch(Branch branch) {
+        if (branch == null) {
+            return false;
+        }
+        return branch.status() == BranchStatus.ACTIVE || branch.status() == BranchStatus.REJECTED;
     }
 
     public boolean isOwner(Branch branch, Player player) {
@@ -671,6 +827,10 @@ public final class BranchManager {
         }
     }
 
+    private boolean isPreviewableBranch(Branch branch) {
+        return branch.status() != BranchStatus.MERGED && branch.status() != BranchStatus.ABANDONED;
+    }
+
     private String normalizeOptionalBranchLabel(String label) {
         if (label == null) {
             return null;
@@ -720,13 +880,22 @@ public final class BranchManager {
     }
 
     private void closeBranch(Branch branch, BranchStatus finalStatus, long closedAt, String note) {
+        closeBranch(branch, finalStatus, closedAt, note, false);
+    }
+
+    private void closeBranch(Branch branch, BranchStatus finalStatus, long closedAt, String note, boolean deleteWorld) {
         Location fallback = worldManager.createReturnLocation(branch.minX(), branch.maxX(), branch.minZ(), branch.maxZ());
-        if (!worldManager.unloadWorld(branch.worldName(), fallback)) {
+        boolean closed = deleteWorld
+                ? worldManager.deleteWorld(branch.worldName(), fallback)
+                : worldManager.unloadWorld(branch.worldName(), fallback);
+        if (!closed) {
             throw new IllegalStateException("无法卸载分支世界: " + branch.worldName());
         }
         lockManager.unlockBranch(branch.id());
         branchRepository.markClosed(branch.id(), finalStatus, closedAt, note);
         rebaseManager.cleanupBranchArtifacts(branch.id());
+        branchesByWorld.remove(branch.worldName());
+        invitedPlayersByBranch.remove(branch.id());
     }
 
     private void notifyAdmins(String message) {
@@ -747,6 +916,7 @@ public final class BranchManager {
             String label,
             World sourceWorld,
             RegionCopyManager.SelectionBounds selection,
+            String mainWorldName,
             Player teleportTarget,
             Location failureFallback
     ) {
@@ -758,7 +928,7 @@ public final class BranchManager {
                 ownerName,
                 label,
                 worldName,
-                sourceWorld.getName(),
+                mainWorldName,
                 selection.minX(),
                 selection.minY(),
                 selection.minZ(),
@@ -788,16 +958,18 @@ public final class BranchManager {
             throw exception;
         }
         branchesByWorld.put(branch.worldName(), branch);
-        rememberMainWorldLocation(teleportTarget);
-        teleportTarget.teleportAsync(worldManager.createBranchSpawn(
-                branchWorld,
-                branch.minX(),
-                branch.maxX(),
-                branch.minY(),
-                branch.maxY(),
-                branch.minZ(),
-                branch.maxZ()
-        ));
+        if (teleportTarget != null) {
+            rememberMainWorldLocation(teleportTarget);
+            teleportTarget.teleportAsync(worldManager.createBranchSpawn(
+                    branchWorld,
+                    branch.minX(),
+                    branch.maxX(),
+                    branch.minY(),
+                    branch.maxY(),
+                    branch.minZ(),
+                    branch.maxZ()
+            ));
+        }
         return branch;
     }
 

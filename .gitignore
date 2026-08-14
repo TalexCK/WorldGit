@@ -2,3 +2,4 @@
 build/
 out/
 *.class
+web-ui/node_modules/
